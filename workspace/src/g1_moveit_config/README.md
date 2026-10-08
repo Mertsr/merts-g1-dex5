@@ -1,6 +1,6 @@
 # g1_moveit_config
 
-MoveIt 2 planning for the G1's two 7-DoF arms and its left Dex5 hand, layered on the controllers the
+MoveIt 2 planning for the G1's two 7-DoF arms and its two Dex5 hands, layered on the controllers the
 control stack already runs. `ament_cmake`, configuration and launch only: `move_group` and
 `servo_node` are upstream.
 
@@ -11,7 +11,7 @@ flowchart LR
     MG -- "FollowJointTrajectory" --> HC["left_hand_controller"]
     POL["balance policy<br/>legs + waist roll, pitch"] --> HW["G1LowCmdSystem"]
     JTC --> HW
-    HC --> HH["G1Dex5SimSystem<br/>(simulated, left only)"]
+    HC --> HH["G1Dex5SimSystem<br/>(simulated, one per hand)"]
     HW -- "rt/lowcmd" --> SIM["unitree_mujoco<br/>(the robot on hardware)"]
     SIM -- "rt/lowstate" --> HW
 ```
@@ -46,12 +46,12 @@ The hardware component leaves any unclaimed joint unpowered, so something always
 swaps the two in a single switch, so the arms are never unowned.
 [`g1_controllers`](../g1_controllers/README.md) has the full ownership table.
 
-The left Dex5 hand is a separate component, `G1Dex5SystemLeft`, on the simulated backend
-`G1Dex5SimSystem`: no DDS channel and no device. `activate_arm` brings it up after the arm,
-best-effort, so a hand that fails to activate leaves the arm usable. The right Dex5 has no component,
-controller, planning group or posture in this milestone. MoveIt still needs a state for every
-joint, so `control.launch.py` reports the right hand's six joints at zero on `/joint_states`. That is
-a placeholder, not a measurement.
+Each Dex5 hand is a separate component, `G1Dex5SystemLeft` and `G1Dex5SystemRight`, on the simulated
+backend `G1Dex5SimSystem`: no DDS channel and no device. `activate_arm` brings each up after the
+arm, best-effort, so a hand that fails to activate leaves the arm and the other hand usable. Both
+components publish their joint states through `joint_state_broadcaster`; nothing publishes
+placeholder hand state, so a hand that is not active leaves MoveIt without its state rather than
+with an invented one.
 
 ## Planning groups
 
@@ -61,6 +61,7 @@ a placeholder, not a measurement.
 | `right_arm` | 7 | `torso_link` to `right_dex5_base_link` |
 | `both_arms` | 14 | the two above, composed |
 | `left_hand` | 6 | the active Dex5 joints (`left_thumb_1`, `left_thumb_2`, `left_index_1`, `left_middle_1`, `left_ring_1`, `left_little_1`), a tree rather than a chain. Mimic joints are not listed. |
+| `right_hand` | 6 | the same six joints with a `right_` prefix. |
 
 `both_arms` is the only group that collision-checks one arm against the other and times a motion
 so both hands arrive together. The per-arm groups stay because a 7-DoF search is far cheaper.
@@ -100,7 +101,7 @@ Arm posture disturbs the gait, so manipulate standing still and walk in `tucked`
 one arm at a time: `both_arms` fails to execute them on this stack (see the
 [navigation and arm planning guide](../../../docs/guides/navigation-and-moveit.md)).
 
-The left Dex5 hand has three postures on `left_hand`; there is no `right_hand` group yet:
+Each Dex5 hand has the same three postures, on `left_hand` and `right_hand`:
 
 | Pose | What it is |
 |---|---|
@@ -212,10 +213,10 @@ other. `test_robot_model` asserts those stay enabled.
 | Test | Needs a simulator | Covers |
 |---|---|---|
 | `test_moveit_config_drift` | no | This package against `g1_controllers`' controller config and `g1_description`'s hand clamp, the composite-group solver rule, SRDF well-formedness and the octomap sensor config. |
-| `test_robot_model` | no | Group composition and order, planning frame, no hand or waist joints in an arm group, the left-only Dex5 hand group, the collision matrix's adjacent and cross-arm pairs, the end effectors and the named poses. |
+| `test_robot_model` | no | Group composition and order, planning frame, no hand or waist joints in an arm group, both Dex5 hand groups, the collision matrix's adjacent and cross-arm pairs, the end effectors and the named poses. |
 | `test_launch_threading` | no | The arguments `g1_bringup`'s `moveit:=true` branch threads into the simulator, the RViz choice, and what `moveit_sim.launch.py` composes. |
 | `test_octomap_blocks_a_plan` | yes | The octomap fills from the LiDAR and MoveIt collision-checks against it: a reach into a mapped obstacle is rejected, with `<octomap>` named in the contact. |
-| `test_moveit_lowcmd` | yes | MoveIt with the pelvis unpinned: every motor claimed before the acquire, the freeze traded for the trajectory controller and back, both arms moving without the balance policy losing the robot, both hands activating, and the left hand closing and opening through MoveIt. |
+| `test_moveit_lowcmd` | yes | MoveIt with the pelvis unpinned: every motor claimed before the acquire, the freeze traded for the trajectory controller and back, both arms moving without the balance policy losing the robot, both hands activating, and each hand closing and opening through MoveIt without moving the other. |
 
 ```bash
 ./scripts/manage.sh test g1_moveit_config

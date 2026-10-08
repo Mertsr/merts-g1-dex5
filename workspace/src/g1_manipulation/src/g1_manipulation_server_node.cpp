@@ -228,7 +228,7 @@ bool G1ManipulationServer::acquire()
 void G1ManipulationServer::initialize()
 {
     // both_arms takes named postures only; pose goals would need the subgroup IK g1.srdf omits.
-    for (const char* name : { "left_arm", "right_arm", "both_arms", "left_hand" })
+    for (const char* name : { "left_arm", "right_arm", "both_arms", "left_hand", "right_hand" })
     {
         MoveGroup& group = groups_.try_emplace(name, shared_from_this(), name).first->second;
         group.setMaxVelocityScalingFactor(velocity_scaling_);
@@ -318,7 +318,7 @@ void G1ManipulationServer::executePick(const std::shared_ptr<GoalHandle<Pick>>& 
     if (hand_group == nullptr)
     {
         result->success = false;
-        result->message = "no " + arm.hand_group + " group: only the left Dex5 hand is configured";
+        result->message = "no " + arm.hand_group + " group in the SRDF";
         goal_handle->abort(result);
         return;
     }
@@ -631,7 +631,7 @@ void G1ManipulationServer::executePlace(const std::shared_ptr<GoalHandle<Place>>
     MoveGroup* hand_group = groupFor(arm.hand_group);
     if (hand_group == nullptr)
     {
-        refuse("no " + arm.hand_group + " group: only the left Dex5 hand is configured");
+        refuse("no " + arm.hand_group + " group in the SRDF");
         return;
     }
 

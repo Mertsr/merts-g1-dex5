@@ -105,7 +105,7 @@ and 5 Nm (wrist pitch and yaw) limits: check them before running on the robot.
   ignores a frame with a wrong checksum.
 - The damped release ramp, where upstream drops the channel.
 - Per-joint position-only gains from the URDF, where upstream hardcodes 10/1.
-- The hand is a separate component, `G1Dex5SystemLeft`, on the simulated Dex5 backend
+- Each hand is a separate component, `G1Dex5SystemLeft` and `G1Dex5SystemRight`, on the simulated Dex5 backend
   ([g1_hand_interface](../g1_hand_interface/README.md)); upstream folds hands into this one.
 
 ## Running

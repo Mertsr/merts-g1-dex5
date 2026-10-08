@@ -128,6 +128,7 @@ void G1VlaServer::initialize()
     const std::vector<std::pair<std::string, std::vector<std::string>>> layout = {
         { "arm_trajectory_controller", { "left_arm", "right_arm" } },
         { "left_hand_controller", { "left_hand" } },
+        { "right_hand_controller", { "right_hand" } },
     };
     for (const auto& [name, groups] : layout)
     {

@@ -10,12 +10,12 @@ C++20.
 
 ## G1Dex5SimSystem
 
-The first Dex5 control milestone: **simulation only, left hand only.** It claims the six active
-joints of one hand, in this pinned order, and refuses to initialise on any other list (so the mimic
+The first Dex5 control milestone: **simulation only.** One instance per hand (the xacro declares `G1Dex5SystemLeft` and
+`G1Dex5SystemRight`). Each claims the six active joints of its hand, in this pinned order, and refuses to initialise on any other list (so the mimic
 joints can never be claimed):
 
 `left_thumb_1_joint`, `left_thumb_2_joint`, `left_index_1_joint`, `left_middle_1_joint`,
-`left_ring_1_joint`, `left_little_1_joint`.
+`left_ring_1_joint`, `left_little_1_joint`; the right hand uses the same suffixes with `right_`.
 
 | Interface | Kind | Behaviour |
 |---|---|---|
@@ -31,7 +31,7 @@ Parameters, from `g1_description/config/dex5_params.yaml` through the xacro:
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `side` | required | `left` or `right`; picks the joint prefix. Only `left` is declared in the xacro. |
+| `side` | required | `left` or `right`; picks the joint prefix; the xacro declares both. |
 | `min` / `max` (per joint) | required | Position limits in rad, copied from the URDF. |
 | `max_joint_velocity_rad_s` | 3.0 | Speed cap. |
 | `time_constant_s` | 0.1 (YAML sets 0.05) | Time constant of the approach. |
@@ -145,7 +145,7 @@ the hardware's PD from the `kp` and `kd` in the command and clamps to the URDF's
   a DDS channel.
 - `test_wire_contract`: the legacy Dex3 mode byte, joint order and frames, plus its plugin lookup.
 
-`g1_description`'s `test_lowcmd_xacro` pins the left component's six joints and that no mimic joint
-is claimed. `g1_moveit_config`'s `test_moveit_lowcmd` runs the left hand end to end
+`g1_description`'s `test_lowcmd_xacro` pins each component's six joints and that no mimic joint
+is claimed. `g1_moveit_config`'s `test_moveit_lowcmd` runs both hands end to end
 (`./scripts/manage.sh test --sim g1_moveit_config`); that needs the simulator for the body and was
 not run when this was written.

@@ -51,3 +51,14 @@ def test_the_active_startup_path_names_no_dex3_component():
         text = _read(*path)
         assert "G1Dex3System" not in text, f"{path[-1]} still names G1Dex3System"
         assert "rt/dex3" not in text, f"{path[-1]} still names a Dex3 channel"
+
+
+def test_both_hands_load_the_same_dds_free_plugin_by_side_parameter():
+    xacro = _read("g1_description", "urdf", "g1_lowcmd.urdf.xacro")
+    for component, side in (("G1Dex5SystemLeft", "left"), ("G1Dex5SystemRight", "right")):
+        assert f'<ros2_control name="{component}"' in xacro
+        assert f'<param name="side">{side}</param>' in xacro
+    assert xacro.count("${dex5.backends[dex5_backend]}") == 2
+    params = _read("g1_description", "config", "dex5_params.yaml")
+    assert "g1_hand_interface/G1Dex5SimSystem" in params
+    assert "G1Dex3System" not in params

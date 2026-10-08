@@ -27,7 +27,7 @@ adds the arms, lives on the
 - SLAM Toolbox maps a building, AMCL localizes against the saved map, and Nav2 drives to a goal.
   Odometry comes from FAST-LIO2 on the Mid360 LiDAR.
 - MoveIt plans for either arm or both, collision-checked against a live octomap
-  from the LiDAR, and the left Dex5 hand is a simulated planning group with provisional named postures. Pick and place
+  from the LiDAR, and each Dex5 hand (left and right) is a simulated planning group with provisional named postures. Pick and place
   are actions, and a BehaviorTree.CPP tree strings them together with navigation: drive to a bench,
   close the last half metre on the measured object, pick a ball, carry it across the building and
   drop it into a box.

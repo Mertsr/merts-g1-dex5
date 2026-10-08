@@ -256,51 +256,54 @@ TEST_F(RobotModelTest, TheNamedPosesAgreeAcrossTheThreeGroups)
     }
 }
 
-TEST_F(RobotModelTest, TheLeftHandIsExactlyItsSixActiveDex5Joints)
+TEST_F(RobotModelTest, EachHandIsExactlyItsSixActiveDex5Joints)
 {
     // A set: MoveIt sorts a joint-list group. The order is pinned by g1_description's xacro test
     // and test_moveit_config_drift. The mimic joints follow these and are not in the group.
-    const auto* hand = model_->getJointModelGroup("left_hand");
-    ASSERT_NE(hand, nullptr);
+    for (const std::string side : { "left", "right" })
+    {
+        const auto* hand = model_->getJointModelGroup(side + "_hand");
+        ASSERT_NE(hand, nullptr) << side;
 
-    const std::set<std::string> expected = {
-        "left_thumb_1_joint",  "left_thumb_2_joint", "left_index_1_joint",
-        "left_middle_1_joint", "left_ring_1_joint",  "left_little_1_joint",
-    };
-    const auto& actual = hand->getActiveJointModelNames();
-    EXPECT_EQ(std::set<std::string>(actual.begin(), actual.end()), expected);
+        const std::set<std::string> expected = {
+            side + "_thumb_1_joint",  side + "_thumb_2_joint", side + "_index_1_joint",
+            side + "_middle_1_joint", side + "_ring_1_joint",  side + "_little_1_joint",
+        };
+        const auto& actual = hand->getActiveJointModelNames();
+        EXPECT_EQ(std::set<std::string>(actual.begin(), actual.end()), expected) << side;
+    }
 }
 
-TEST_F(RobotModelTest, TheRightHandHasNoGroupInTheLeftOnlyMilestone)
-{
-    EXPECT_FALSE(model_->hasJointModelGroup("right_hand"));
-}
-
-TEST_F(RobotModelTest, TheLeftHandIsItsArmsEndEffector)
+TEST_F(RobotModelTest, EachHandIsItsArmsEndEffector)
 {
     // Lets attachObject derive its touch links and RViz offer the hand as the arm's gripper.
     const auto& effectors = srdf_->getEndEffectors();
-    ASSERT_EQ(effectors.size(), 1U) << "expected the left hand's end effector only";
-    EXPECT_EQ(effectors.front().component_group_, "left_hand");
-    EXPECT_EQ(effectors.front().parent_link_, "left_dex5_base_link");
-    EXPECT_EQ(effectors.front().parent_group_, "left_arm");
+    ASSERT_EQ(effectors.size(), 2U);
+    for (const auto& effector : effectors)
+    {
+        const std::string side = effector.component_group_ == "left_hand" ? "left" : "right";
+        EXPECT_EQ(effector.component_group_, side + "_hand");
+        EXPECT_EQ(effector.parent_link_, side + "_dex5_base_link");
+        EXPECT_EQ(effector.parent_group_, side + "_arm");
+    }
 }
 
-TEST_F(RobotModelTest, TheLeftHandHasOpenClosedAndPinchReadyPostures)
+TEST_F(RobotModelTest, EachHandHasOpenClosedAndPinchReadyPostures)
 {
     // Each must name all six joints, or the finger left out stays wherever it happened to be.
-    std::set<std::string> poses;
+    std::map<std::string, std::set<std::string>> poses;
     for (const auto& state : srdf_->getGroupStates())
     {
-        EXPECT_NE(state.group_, "right_hand");
-        if (state.group_ == "left_hand")
+        if (state.group_ == "left_hand" || state.group_ == "right_hand")
         {
-            poses.insert(state.name_);
+            poses[state.group_].insert(state.name_);
             EXPECT_EQ(state.joint_values_.size(), 6U)
-                << "left_hand posture '" << state.name_ << "' does not cover the hand";
+                << state.group_ << " posture '" << state.name_ << "' does not cover the hand";
         }
     }
-    EXPECT_EQ(poses, (std::set<std::string>{ "open", "closed", "pinch_ready" }));
+    const std::set<std::string> expected = { "open", "closed", "pinch_ready" };
+    EXPECT_EQ(poses["left_hand"], expected);
+    EXPECT_EQ(poses["right_hand"], expected);
 }
 
 TEST_F(RobotModelTest, TheNamedPosesAreWithinJointLimits)

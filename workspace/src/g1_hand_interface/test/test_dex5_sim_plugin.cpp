@@ -20,3 +20,18 @@ TEST(G1Dex5SimSystemPluginlib, DiscoversAndInstantiates)
     auto instance = loader.createUniqueInstance("g1_hand_interface/G1Dex5SimSystem");
     ASSERT_NE(instance, nullptr);
 }
+
+TEST(G1Dex5SimSystemPluginlib, OneClassServesBothHandsAsSeparateInstances)
+{
+    // The xacro names the left and right components differently but both load this class, with
+    // the side as a parameter.
+    pluginlib::ClassLoader<hardware_interface::SystemInterface> loader(
+        "hardware_interface",
+        "hardware_interface::SystemInterface");
+
+    auto left  = loader.createUniqueInstance("g1_hand_interface/G1Dex5SimSystem");
+    auto right = loader.createUniqueInstance("g1_hand_interface/G1Dex5SimSystem");
+    ASSERT_NE(left, nullptr);
+    ASSERT_NE(right, nullptr);
+    EXPECT_NE(left.get(), right.get());
+}

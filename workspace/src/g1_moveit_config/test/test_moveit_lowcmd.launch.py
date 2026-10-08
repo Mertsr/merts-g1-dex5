@@ -58,18 +58,23 @@ ARM_NUDGE = {f"{side}_shoulder_pitch_joint": -0.20 for side in ("left", "right")
     f"{side}_elbow_joint": 0.20 for side in ("left", "right")
 }
 
-# 12 legs + 3 waist + 14 arms + 6 left Dex5 joints from the controllers, plus the right Dex5's 6
-# placeholder zeros from control.launch.py. move_group will not plan until every joint it models
-# has a state.
+# 12 legs + 3 waist + 14 arms + 6 joints for each Dex5 hand, all from the controllers.
+# move_group will not plan until every joint it models has a state.
 EXPECTED_JOINT_COUNT = 41
 
-LEFT_HAND = [
-    f"left_{suffix}_joint"
-    for suffix in ("thumb_1", "thumb_2", "index_1", "middle_1", "ring_1", "little_1")
-]
+HANDS = {
+    side: [
+        f"{side}_{suffix}_joint"
+        for suffix in ("thumb_1", "thumb_2", "index_1", "middle_1", "ring_1", "little_1")
+    ]
+    for side in ("left", "right")
+}
 # A closed hand, written out rather than read from g1.srdf, so the expectation does not come
 # from a file under test.
-LEFT_HAND_CLOSED = dict(zip(LEFT_HAND, [1.30, 0.50, 1.15, 1.15, 1.15, 1.15], strict=True))
+HAND_CLOSED = {
+    side: dict(zip(joints, [1.30, 0.50, 1.15, 1.15, 1.15, 1.15], strict=True))
+    for side, joints in HANDS.items()
+}
 
 
 def generate_test_description():
@@ -323,11 +328,11 @@ class TestMoveItLowCmd(unittest.TestCase):
         # waist_yaw is deliberately not part of the trade, so acquiring must not disturb it.
         self.assertEqual(states.get("waist_freeze_controller"), "active")
 
-        # The left hand comes up in the same acquire; the right Dex5 has no component or controller.
+        # Both hands come up in the same acquire, each on its own component and controller.
         components = self._component_states()
-        self.assertEqual(components.get("G1Dex5SystemLeft"), "active")
-        self.assertEqual(states.get("left_hand_controller"), "active")
-        self.assertNotIn("right_hand_controller", states)
+        for side, component in (("left", "G1Dex5SystemLeft"), ("right", "G1Dex5SystemRight")):
+            self.assertEqual(components.get(component), "active")
+            self.assertEqual(states.get(f"{side}_hand_controller"), "active")
 
         self._assert_still_standing("after acquiring the arms")
 
@@ -349,42 +354,46 @@ class TestMoveItLowCmd(unittest.TestCase):
         # The assertion this whole file exists for: the arms moved and the robot stayed up.
         self._assert_still_standing("after moving both arms")
 
-    def test_07_the_hand_closes_and_opens_through_moveit(self):
+    def test_07_each_hand_closes_and_opens_through_moveit_independently(self):
         """A Dex5 is six active joints, so MoveIt drives it as a group, not as a GripperCommand.
 
         The fingers that come back on /joint_states are the ones the simulated backend moved, so
-        this is the end-to-end proof that the command reaches G1Dex5SimSystem and back.
+        this is the end-to-end proof that the command reaches G1Dex5SimSystem and back. The other
+        hand must stay where it was.
         """
-        before = {name: self.joint_state[name] for name in LEFT_HAND}
+        for side, other in (("left", "right"), ("right", "left")):
+            hand, closed = HANDS[side], HAND_CLOSED[side]
+            before = {name: self.joint_state[name] for name in hand}
+            other_before = {name: self.joint_state[name] for name in HANDS[other]}
 
-        result = self._send_move_goal(
-            self._joint_goal("left_hand", LEFT_HAND_CLOSED, absolute=True)
-        )
-        self.assertIsNotNone(result, "left_hand closed goal was rejected")
-        self.assertEqual(
-            result.error_code.val,
-            1,
-            f"closing the left hand failed with error_code {result.error_code.val}",
-        )
-        self._spin(2.0)
-
-        for name, target in LEFT_HAND_CLOSED.items():
-            self.assertAlmostEqual(
-                self.joint_state[name],
-                target,
-                delta=0.05,
-                msg=f"{name} is at {self.joint_state[name]:.3f}, commanded {target:.3f}",
+            result = self._send_move_goal(self._joint_goal(f"{side}_hand", closed, absolute=True))
+            self.assertIsNotNone(result, f"{side}_hand closed goal was rejected")
+            self.assertEqual(
+                result.error_code.val,
+                1,
+                f"closing the {side} hand failed with error_code {result.error_code.val}",
             )
-        moved = max(abs(self.joint_state[n] - before[n]) for n in LEFT_HAND)
-        self.assertGreater(moved, 0.1, "no finger moved; the grasp was a no-op")
+            self._spin(2.0)
 
-        # Back to open, so the release below finds the hand where the suite did.
-        result = self._send_move_goal(
-            self._joint_goal("left_hand", dict.fromkeys(LEFT_HAND, 0.0), absolute=True)
-        )
-        self.assertIsNotNone(result, "left_hand open goal was rejected")
-        self.assertEqual(result.error_code.val, 1, "opening the left hand failed")
-        self._assert_still_standing("after closing and opening the hand")
+            for name, target in closed.items():
+                self.assertAlmostEqual(
+                    self.joint_state[name],
+                    target,
+                    delta=0.05,
+                    msg=f"{name} is at {self.joint_state[name]:.3f}, commanded {target:.3f}",
+                )
+            moved = max(abs(self.joint_state[n] - before[n]) for n in hand)
+            self.assertGreater(moved, 0.1, "no finger moved; the grasp was a no-op")
+            for name, value in other_before.items():
+                self.assertAlmostEqual(self.joint_state[name], value, delta=0.02, msg=name)
+
+            # Back to open, so the release below finds the hand where the suite did.
+            result = self._send_move_goal(
+                self._joint_goal(f"{side}_hand", dict.fromkeys(hand, 0.0), absolute=True)
+            )
+            self.assertIsNotNone(result, f"{side}_hand open goal was rejected")
+            self.assertEqual(result.error_code.val, 1, f"opening the {side} hand failed")
+            self._assert_still_standing(f"after closing and opening the {side} hand")
 
     def test_08_releasing_hands_the_arms_back_to_the_freeze(self):
         self._run_bringup_script("deactivate_arm")

@@ -128,16 +128,17 @@ The [guides](../../../docs/guides/) cover each combination in full.
 
 ```bash
 ros2 launch g1_bringup activate_arm.launch.py
-# FollowJointTrajectory goals: arm_trajectory_controller, left_hand_controller (left Dex5 only)
+# FollowJointTrajectory goals: arm_trajectory_controller, left_hand_controller, right_hand_controller (Dex5, simulated)
 ros2 launch g1_bringup deactivate_arm.launch.py
 ```
 
 `activate_arm` swaps `arm_freeze_controller` for `arm_trajectory_controller` in one switch, because
 a joint `G1LowCmdSystem` sees unclaimed is left unpowered
 ([g1_controllers](../g1_controllers/README.md) has the ownership table). It then activates the
-left Dex5 (`G1Dex5SystemLeft`, the simulated backend), component before controller, best-effort: a
-hand that fails logs a warning and leaves the arm usable. The right Dex5 has no component or
-controller, so nothing is spawned or activated for it. Last, it ramps both arms out to the sides over four seconds without planning, so MoveIt
+each Dex5 hand (`G1Dex5SystemLeft` and `G1Dex5SystemRight`, the simulated backend), component before
+controller, best-effort and independently: a hand that fails logs a warning and leaves the arm and
+the other hand usable. Both hand controllers are spawned inactive. Each component provides its own
+`/joint_states`; no placeholder state is published for a hand. Last, it ramps both arms out to the sides over four seconds without planning, so MoveIt
 starts from a state out of collision with the octomap. If that move fails the script exits
 non-zero.
 
