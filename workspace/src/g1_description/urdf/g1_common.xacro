@@ -5,8 +5,7 @@
        frames without the body's ros2_control block. Geometry-only consumers (RViz, the
        sensor-extrinsic test) load it so they cannot claim the body motors. -->
 
-  <!-- Unitree's URDF, byte-for-byte (CRLF included) apart from mesh paths rewritten to
-       package:// for RViz. Additions go in this file, so it stays diffable against upstream. -->
+  <!-- Includes the plain host URDF, which contains the G1 body and bilateral Dex5 hand models. -->
   <xacro:include filename="g1_29dof_with_hand_rev_1_0.urdf"/>
 
   <!-- REP 103 optical frames (z forward, x right, y down), which ROS depth consumers assume.
