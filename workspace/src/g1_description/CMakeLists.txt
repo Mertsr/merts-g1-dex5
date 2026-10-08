@@ -9,6 +9,15 @@ find_package(ament_cmake REQUIRED)
 
 install(DIRECTORY urdf config DESTINATION share/${PROJECT_NAME})
 
+# Dex5 hand meshes are not committed: the user places the STLs in meshes/dex5_left and
+# meshes/dex5_right, and they install to share/g1_description/meshes/dex5_{left,right}.
+foreach(_side left right)
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/meshes/dex5_${_side}")
+    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/meshes/dex5_${_side}"
+      DESTINATION share/${PROJECT_NAME}/meshes)
+  endif()
+endforeach()
+
 # Copied at configure time rather than committed
 set(G1_VENDOR_MESHES "/opt/unitree_robotics/unitree_mujoco/unitree_robots/g1/meshes"
     CACHE PATH "Directory holding the vendored G1 visual meshes")
@@ -47,6 +56,7 @@ if(BUILD_TESTING)
   # The sensor mounts are duplicated in the simulator, which links no ROS and cannot read TF.
   ament_add_pytest_test(test_sensor_mounts test/test_sensor_mounts.py)
   ament_add_pytest_test(test_motor_order test/test_motor_order.py)
+  ament_add_pytest_test(test_dex5_urdf test/test_dex5_urdf.py)
 
   # ament_cmake_xmllint only covers package.xml, and xacro accepts a double hyphen inside a
   # comment, which is illegal XML and breaks the next strict parser to read the file.

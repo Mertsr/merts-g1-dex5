@@ -83,3 +83,24 @@ own MJCF instead.
 | `test_motor_order` | `kG1JointNames` in `g1_hardware_interface` lists the 29 motors in SDK order and names only joints the vendored URDF has. |
 | `test_sensor_mounts` | The simulator's compile-time LiDAR mount (`kMountXyz`, `kMountRpy` in `sensor_publisher.cc`) matches the URDF's `mid360_joint`, and the head entry in `config/cameras.yaml` matches `d435_joint`. The simulator links no ROS, so it cannot ask TF where a sensor is. |
 | `xmllint_description_g1_description` | Every URDF and xacro is well-formed XML, which xacro does not enforce. |
+
+## Dex5 (RH56E2) hands
+
+`urdf/RH56E2_L_2025_9_10.xacro` and `urdf/RH56E2_R_2025_9_11.xacro` are the SolidWorks exports
+(roots `left_dex5_base_link`, `right_dex5_base_link`), included by `g1_common.xacro` and mounted by
+fixed joints `left_dex5_mount_joint` / `right_dex5_mount_joint` on `left_wrist_yaw_link` /
+`right_wrist_yaw_link`. They replace the Unitree Dex3 chains, which are removed from the vendored
+URDF; the Dex3 ros2_control components are gone too. Active joints: `{side}_{thumb,index,middle,ring,little}_1_joint`
+and `{side}_thumb_2_joint`; the others are mimics.
+
+- **Mount pose is provisional (zeros), not a validated fit.** Override with xacro args
+  `dex5_left_mount_xyz`, `dex5_left_mount_rpy`, `dex5_right_mount_xyz`, `dex5_right_mount_rpy`.
+  The `*_hand_grasp_frame` links now sit at the Dex5 base origin, also provisional.
+- **Meshes are not in the repo.** Place the STLs, original names and case kept, in
+  `workspace/src/g1_description/meshes/dex5_left/` and `.../dex5_right/` (e.g. `base_link.STL`,
+  `left_thumb_1.STL`); they install to `share/g1_description/meshes/dex5_{left,right}/` and are
+  referenced as `package://g1_description/meshes/dex5_{left,right}/<name>.STL`. Nothing has been
+  verified visually until they are installed.
+- Description only: no hand hardware plugin, controllers, MoveIt or MuJoCo changes. Other packages
+  (e.g. `g1_moveit_config`, `g1_manipulation`, `g1_hand_interface`, `dex3_params.yaml`) still
+  reference the removed Dex3 names and need a follow-up.
