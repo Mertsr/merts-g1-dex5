@@ -166,7 +166,8 @@ def test_lowcmd_wrapper_expands_without_duplicate_hands(tmp_path):
     _assert_tree_is_closed_and_connected(root)
     _validate_hands(root)
     assert [component.get("name") for component in root.findall("ros2_control")] == [
-        "G1LowCmdSystem"
+        "G1LowCmdSystem",
+        "G1Dex5SystemLeft",
     ]
     for frame in ("camera_depth_optical_frame", "camera_color_optical_frame",
                   "chest_camera_link", "mid360_imu"):

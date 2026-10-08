@@ -53,8 +53,8 @@ The common wrapper adds sensor frames to the host URDF:
 
 `config/lowcmd_params.yaml` sets the body component's parameters, described in
 [g1_hardware_interface](../g1_hardware_interface/README.md#parameters), and a
-`position_only_kp` and `position_only_kd` per joint. The Dex5 models are description-only; this
-change does not add hand hardware control.
+`position_only_kp` and `position_only_kd` per joint. `config/dex5_params.yaml` sets the left Dex5
+component (see [Dex5 (RH56E2) hands](#dex5-rh56e2-hands)).
 
 ## Inspecting the model
 
@@ -100,4 +100,16 @@ declarations, force-sensor and palm links, limits and mimic relations, are flatt
 - `*_hand_grasp_frame` names remain as compatibility frames at the source palm-link origins. Their
   zero offsets are not calibrated grasp points. Any consumer still expecting Dex3 links, joints or
   grasp geometry needs a separately scoped compatibility update.
-- Description only: no hand ros2_control, controller, MoveIt or MJCF changes are included.
+- **Control scope: simulation only, left hand only.** `urdf/g1_lowcmd.urdf.xacro` adds a second
+  `ros2_control` component, `G1Dex5SystemLeft`, next to the 29-joint `G1LowCmdSystem`. It claims
+  exactly `left_thumb_1_joint`, `left_thumb_2_joint`, `left_index_1_joint`, `left_middle_1_joint`,
+  `left_ring_1_joint` and `left_little_1_joint`, in that order, with a position command and
+  position, velocity and effort state, in radians. The distal mimic joints (`thumb_3`, `thumb_4` and
+  every `*_2`) are never claimed; the URDF computes them. The right Dex5 stays in the URDF with no
+  component and no controller.
+- The xacro argument `dex5_backend` (default `sim`) picks the plugin through `backends:` in
+  `config/dex5_params.yaml`. `sim` is `g1_hand_interface/G1Dex5SimSystem`, which opens no DDS
+  channel and needs no hand. A physical backend would be one more entry there, behind the same
+  joints. None exists: there is no Modbus/TCP, touch-sensor or MuJoCo hand model in this change.
+- The per-joint `min`/`max` in `dex5_params.yaml` copy the URDF limits, and `test_lowcmd_xacro`
+  checks they still match.

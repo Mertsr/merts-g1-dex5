@@ -128,19 +128,20 @@ The [guides](../../../docs/guides/) cover each combination in full.
 
 ```bash
 ros2 launch g1_bringup activate_arm.launch.py
-# FollowJointTrajectory goals: arm_trajectory_controller, left_hand_controller, right_hand_controller
+# FollowJointTrajectory goals: arm_trajectory_controller, left_hand_controller (left Dex5 only)
 ros2 launch g1_bringup deactivate_arm.launch.py
 ```
 
 `activate_arm` swaps `arm_freeze_controller` for `arm_trajectory_controller` in one switch, because
 a joint `G1LowCmdSystem` sees unclaimed is left unpowered
-([g1_controllers](../g1_controllers/README.md) has the ownership table). It then activates each
-Dex3, component before controller, best-effort: a missing hand logs a warning and leaves the arm
-usable. Last, it ramps both arms out to the sides over four seconds without planning, so MoveIt
+([g1_controllers](../g1_controllers/README.md) has the ownership table). It then activates the
+left Dex5 (`G1Dex5SystemLeft`, the simulated backend), component before controller, best-effort: a
+hand that fails logs a warning and leaves the arm usable. The right Dex5 has no component or
+controller, so nothing is spawned or activated for it. Last, it ramps both arms out to the sides over four seconds without planning, so MoveIt
 starts from a state out of collision with the octomap. If that move fails the script exits
 non-zero.
 
-`--posture sides` hangs the arms beside the thighs instead, and `--no-hands` leaves the Dex3 alone.
+`--posture sides` hangs the arms beside the thighs instead, and `--no-hands` leaves the Dex5 alone.
 `arms_at_sides` passes both.
 
 `deactivate_arm` releases the hands, then swaps the freeze back in, again in one switch.

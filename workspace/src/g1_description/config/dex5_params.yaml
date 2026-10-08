@@ -1,0 +1,30 @@
+# Parameters for the Dex5 ros2_control components, consumed by urdf/g1_lowcmd.urdf.xacro through
+# xacro.load_yaml: ros2_control plugins only see parameters that arrive as <ros2_control><param>
+# tags.
+#
+# Only the LEFT hand has a component in this milestone. The right Dex5 stays in the URDF but is
+# not claimed, and no right-hand controller is spawned.
+
+# Selected with the xacro argument dex5_backend (default sim). Every backend implements the same
+# six joints and interfaces, so the controllers and MoveIt configuration do not change with it.
+# A physical backend adds one entry here and its own plugin.
+backends:
+  sim: g1_hand_interface/G1Dex5SimSystem
+
+# Simulation backend.
+sim:
+  max_joint_velocity_rad_s: 3.0  # rad/s; speed cap of the approach. g1_moveit_config plans under it.
+  time_constant_s: 0.05          # s; first-order approach to the command
+
+# Active joints in the pinned order the component enforces. The distal mimic joints (thumb_3,
+# thumb_4 and every *_2) follow these through the URDF and are never claimed.
+#
+# Position limits copied from the URDF, since HardwareInfo does not carry <limit> tags; the
+# component clamps to them. A test compares this file with the URDF.
+joints:
+  left_thumb_1_joint:  { min: 0.0, max: 1.658 }
+  left_thumb_2_joint:  { min: 0.0, max: 0.62 }
+  left_index_1_joint:  { min: 0.0, max: 1.4381 }
+  left_middle_1_joint: { min: 0.0, max: 1.4381 }
+  left_ring_1_joint:   { min: 0.0, max: 1.4381 }
+  left_little_1_joint: { min: 0.0, max: 1.4381 }

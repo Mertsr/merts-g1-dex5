@@ -2,7 +2,7 @@
 <package format="3">
   <name>g1_hand_interface</name>
   <version>0.1.0</version>
-  <description>ros2_control system interface for the Unitree Dex3-1 hand, over its own SDK channels.</description>
+  <description>ros2_control system interfaces for the hands: a simulated Dex5 backend, and the legacy Unitree Dex3-1 one over its own SDK channels.</description>
   <maintainer email="gupta.adyansh@gmail.com">Adyansh Gupta</maintainer>
   <license>BSD-3-Clause</license>
 
@@ -17,6 +17,7 @@
   <test_depend>ament_cmake_lint_cmake</test_depend>
   <test_depend>ament_cmake_xmllint</test_depend>
   <test_depend>ament_cmake_gmock</test_depend>
+  <test_depend>ament_cmake_pytest</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

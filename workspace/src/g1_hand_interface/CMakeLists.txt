@@ -46,12 +46,24 @@ target_link_libraries(g1_dex3_system PUBLIC
 # instantiates.
 target_compile_options(g1_dex3_system PRIVATE -Wno-deprecated-declarations)
 
+# The Dex5 simulation backend. Deliberately its own library with no SDK dependency, so selecting
+# it can never open a DDS channel or touch the Dex3 path above.
+add_library(g1_dex5_sim_system SHARED src/g1_dex5_sim_system.cpp)
+g1_target_defaults(g1_dex5_sim_system)
+target_link_libraries(g1_dex5_sim_system PUBLIC
+  hardware_interface::hardware_interface
+  pluginlib::pluginlib
+  rclcpp::rclcpp
+  rclcpp_lifecycle::rclcpp_lifecycle
+)
+
 pluginlib_export_plugin_description_file(hardware_interface g1_hand_interface.xml)
+pluginlib_export_plugin_description_file(hardware_interface g1_dex5_sim.xml)
 
 # --- install ---------------------------------------------------------------
 
 install(DIRECTORY include/ DESTINATION include)
-install(TARGETS g1_dex3_system EXPORT export_${PROJECT_NAME} DESTINATION lib)
+install(TARGETS g1_dex3_system g1_dex5_sim_system EXPORT export_${PROJECT_NAME} DESTINATION lib)
 
 # --- tests -----------------------------------------------------------------
 
@@ -65,6 +77,18 @@ if(BUILD_TESTING)
   ament_add_gmock(test_wire_contract test/test_wire_contract.cpp)
   target_link_libraries(test_wire_contract
     g1_dex3_system pluginlib::pluginlib hardware_interface::hardware_interface)
+
+  # The simulated Dex5 backend: its kinematics (no ROS needed) and its plugin discovery.
+  ament_add_gmock(test_dex5_sim_model test/test_dex5_sim_model.cpp)
+  target_compile_features(test_dex5_sim_model PUBLIC cxx_std_20)
+  target_include_directories(test_dex5_sim_model PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  ament_add_gmock(test_dex5_sim_plugin test/test_dex5_sim_plugin.cpp)
+  target_link_libraries(test_dex5_sim_plugin
+    g1_dex5_sim_system pluginlib::pluginlib hardware_interface::hardware_interface)
+
+  # The Dex5 simulation path must stay clear of the Dex3 SDK component and DDS.
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(test_dex5_sim_isolation test/test_dex5_sim_isolation.py)
 
   g1_add_lint_tests()
 endif()

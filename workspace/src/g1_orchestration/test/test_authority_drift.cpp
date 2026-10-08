@@ -49,14 +49,14 @@ TEST(AuthorityDrift, EveryNameThisPackageUsesAppearsInTheScript)
     }
 }
 
-TEST(AuthorityDrift, TheArmComesFirstAndBothHandsFollow)
+TEST(AuthorityDrift, TheArmComesFirstAndTheLeftHandFollows)
 {
     // acquireArm treats parts.front() as the required arm; the hands behind it are best-effort.
     const auto& parts = g1_orchestration::controlledParts();
-    ASSERT_EQ(parts.size(), 3U);
+    ASSERT_EQ(parts.size(), 2U);
     EXPECT_EQ(parts[0].controller, "arm_trajectory_controller");
-    EXPECT_EQ(parts[1].component, "G1Dex3SystemLeft");
-    EXPECT_EQ(parts[2].component, "G1Dex3SystemRight");
+    EXPECT_EQ(parts[1].component, "G1Dex5SystemLeft");
+    EXPECT_EQ(parts[1].controller, "left_hand_controller");
 }
 
 TEST(AuthorityDrift, TheArmsAreNeverUnowned)

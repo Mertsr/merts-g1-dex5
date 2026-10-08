@@ -165,8 +165,7 @@ const std::vector<ControlledPart>& controlledParts()
     // the always-active body component, so the arm is acquired by a controller switch alone.
     static const std::vector<ControlledPart> parts = {
         { "", "arm_trajectory_controller", "arm_freeze_controller" },
-        { "G1Dex3SystemLeft", "left_hand_controller", "" },
-        { "G1Dex3SystemRight", "right_hand_controller", "" },
+        { "G1Dex5SystemLeft", "left_hand_controller", "" },
     };
     return parts;
 }

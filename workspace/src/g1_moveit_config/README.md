@@ -1,6 +1,6 @@
 # g1_moveit_config
 
-MoveIt 2 planning for the G1's two 7-DoF arms and its Dex3 hands, layered on the controllers the
+MoveIt 2 planning for the G1's two 7-DoF arms and its left Dex5 hand, layered on the controllers the
 control stack already runs. `ament_cmake`, configuration and launch only: `move_group` and
 `servo_node` are upstream.
 
@@ -8,13 +8,12 @@ control stack already runs. `ament_cmake`, configuration and launch only: `move_
 flowchart LR
     JS["/joint_states<br/>body + fingers"] --> MG["move_group<br/>plan + collision check"]
     MG -- "FollowJointTrajectory" --> JTC["arm_trajectory_controller"]
-    MG -- "FollowJointTrajectory" --> HC["left/right_hand_controller"]
+    MG -- "FollowJointTrajectory" --> HC["left_hand_controller"]
     POL["balance policy<br/>legs + waist roll, pitch"] --> HW["G1LowCmdSystem"]
     JTC --> HW
-    HC --> HH["G1Dex3System (one per hand)"]
+    HC --> HH["G1Dex5SimSystem<br/>(simulated, left only)"]
     HW -- "rt/lowcmd" --> SIM["unitree_mujoco<br/>(the robot on hardware)"]
     SIM -- "rt/lowstate" --> HW
-    HH -- "rt/dex3/side/cmd" --> SIM
 ```
 
 MoveIt adds no command path. It is another client of actions the controllers already serve, so
@@ -47,19 +46,21 @@ The hardware component leaves any unclaimed joint unpowered, so something always
 swaps the two in a single switch, so the arms are never unowned.
 [`g1_controllers`](../g1_controllers/README.md) has the full ownership table.
 
-The hands are separate components on their own SDK channels (`rt/dex3/<side>/{cmd,state}`).
-`activate_arm` brings them up after the arm, best-effort: `G1Dex3System` refuses to activate
-without hand state, so an absent hand stays inactive and the arm remains usable.
+The left Dex5 hand is a separate component, `G1Dex5SystemLeft`, on the simulated backend
+`G1Dex5SimSystem`: no DDS channel and no device. `activate_arm` brings it up after the arm,
+best-effort, so a hand that fails to activate leaves the arm usable. The right Dex5 has no component,
+controller, planning group or posture in this milestone. MoveIt still needs a state for every
+joint, so `control.launch.py` reports the right hand's six joints at zero on `/joint_states`. That is
+a placeholder, not a measurement.
 
 ## Planning groups
 
 | Group | Joints | Chain |
 |---|---|---|
-| `left_arm` | 7 | `torso_link` to `left_hand_palm_link` |
-| `right_arm` | 7 | `torso_link` to `right_hand_palm_link` |
+| `left_arm` | 7 | `torso_link` to `left_dex5_base_link` |
+| `right_arm` | 7 | `torso_link` to `right_dex5_base_link` |
 | `both_arms` | 14 | the two above, composed |
-| `left_hand` | 7 | the Dex3 fingers, a tree rather than a chain |
-| `right_hand` | 7 | as above |
+| `left_hand` | 6 | the active Dex5 joints (`left_thumb_1`, `left_thumb_2`, `left_index_1`, `left_middle_1`, `left_ring_1`, `left_little_1`), a tree rather than a chain. Mimic joints are not listed. |
 
 `both_arms` is the only group that collision-checks one arm against the other and times a motion
 so both hands arrive together. The per-arm groups stay because a 7-DoF search is far cheaper.
@@ -99,22 +100,19 @@ Arm posture disturbs the gait, so manipulate standing still and walk in `tucked`
 one arm at a time: `both_arms` fails to execute them on this stack (see the
 [navigation and arm planning guide](../../../docs/guides/navigation-and-moveit.md)).
 
-The hands have three postures each, on `left_hand` and `right_hand`:
+The left Dex5 hand has three postures on `left_hand`; there is no `right_hand` group yet:
 
 | Pose | What it is |
 |---|---|
-| `open` | Every finger joint at 0: fingers straight, thumb mid-range. |
-| `pinch_ready` | What a pick descends in: fingers open, thumb pulled back behind the object's near face. |
-| `closed` | The thumb swung forward against the curled fingers, short of the end stops so both can press into an object. |
+| `open` | Every active finger joint at 0: fingers straight. |
+| `pinch_ready` | Thumb partway in, fingers open. |
+| `closed` | Thumb opposed and the four fingers curled to about 80 percent of their range. |
 
-At `open` the thumb reaches the table before the object does. Even retracted in `pinch_ready` the
-hand hangs 113 mm below the palm origin, 63 mm below the grasp frame, which is the clearance
-`g1_manipulation`'s `min_grip_height_m` exists for (0.080 m by default; `g1_bringup` sets it per
-world). [`g1_manipulation`](../g1_manipulation/README.md) describes how a pick and place uses the
-postures.
-
-`closed` leaves thumb abduction (`thumb_0`) at zero: abducted, the thumb grazes the middle finger
-late in the close, which stalls a finger in an empty hand and reads as a grasp to the grip check.
+**These values are provisional.** They are chosen from the URDF joint ranges, stay inside them
+(`test_moveit_config_drift`), and have not been checked against a grasp: the wrist mounts are zero
+placeholders and the hand meshes are not committed. The old Dex3 clearance numbers do not apply.
+`g1_manipulation`'s grasp geometry, grip check and `min_grip_height_m` were written for the Dex3 hand
+and have not been re-derived for Dex5, so pick and place is not supported on this hand yet.
 
 MoveIt's attachment is planner bookkeeping, not what carries the load. The fingers hold an object
 by friction, with a simulator grasp weld as a stand-in in the navigation world
@@ -145,9 +143,10 @@ claims position alone, so the arm runs on the component's `position_only_kp` (30
 and elbows, 150 on the wrists) with no gravity compensation. It falls behind a trajectory timed
 against the motor, and the controller aborts on its goal-time tolerance.
 
-The fingers have a real clamp: `G1Dex3System` slew-limits every finger at
-`max_joint_velocity_rad_s` (3.0), so planning faster only stretches the motion until the goal-time
-tolerance trips. `test_moveit_config_drift` keeps every finger limit under it. The body component
+The fingers have a clamp: the simulated Dex5 backend caps every finger at
+`max_joint_velocity_rad_s` (3.0, `g1_description/config/dex5_params.yaml`), so planning faster only
+stretches the motion until the goal-time tolerance trips. `test_moveit_config_drift` keeps every
+finger limit under it. The body component
 has no such clamp, deliberately: it would throttle the fast corrections the balance policy needs.
 
 ## Running
@@ -213,7 +212,7 @@ other. `test_robot_model` asserts those stay enabled.
 | Test | Needs a simulator | Covers |
 |---|---|---|
 | `test_moveit_config_drift` | no | This package against `g1_controllers`' controller config and `g1_description`'s hand clamp, the composite-group solver rule, SRDF well-formedness and the octomap sensor config. |
-| `test_robot_model` | no | Group composition and order, planning frame, no hand or waist joints in an arm group, the collision matrix's adjacent and cross-arm pairs, the end effectors and the named poses. |
+| `test_robot_model` | no | Group composition and order, planning frame, no hand or waist joints in an arm group, the left-only Dex5 hand group, the collision matrix's adjacent and cross-arm pairs, the end effectors and the named poses. |
 | `test_launch_threading` | no | The arguments `g1_bringup`'s `moveit:=true` branch threads into the simulator, the RViz choice, and what `moveit_sim.launch.py` composes. |
 | `test_octomap_blocks_a_plan` | yes | The octomap fills from the LiDAR and MoveIt collision-checks against it: a reach into a mapped obstacle is rejected, with `<octomap>` named in the contact. |
 | `test_moveit_lowcmd` | yes | MoveIt with the pelvis unpinned: every motor claimed before the acquire, the freeze traded for the trajectory controller and back, both arms moving without the balance policy losing the robot, both hands activating, and the left hand closing and opening through MoveIt. |

@@ -39,7 +39,7 @@ const std::vector<std::string> kRightArm = {
 
 /// Links that can reach the other arm; their cross-arm pairs must stay enabled for both_arms.
 const std::vector<std::string> kReachingLinks = {
-    "elbow_link", "wrist_roll_link", "wrist_pitch_link", "wrist_yaw_link", "hand_palm_link",
+    "elbow_link", "wrist_roll_link", "wrist_pitch_link", "wrist_yaw_link", "dex5_base_link",
 };
 
 /// Room every joint of a named posture needs before self-collision: an arm drooping under load
@@ -194,8 +194,11 @@ TEST_F(RobotModelTest, NoArmGroupCommandsTheHand)
         ASSERT_NE(group, nullptr) << name;
         for (const auto& joint : group->getActiveJointModelNames())
         {
-            EXPECT_EQ(joint.find("_hand_"), std::string::npos)
-                << name << " contains the hand joint " << joint;
+            for (const auto* finger : { "thumb", "index", "middle", "ring", "little" })
+            {
+                EXPECT_EQ(joint.find(finger), std::string::npos)
+                    << name << " contains the hand joint " << joint;
+            }
         }
     }
 }
@@ -253,64 +256,51 @@ TEST_F(RobotModelTest, TheNamedPosesAgreeAcrossTheThreeGroups)
     }
 }
 
-TEST_F(RobotModelTest, EachHandIsExactlyItsSevenFingerJoints)
+TEST_F(RobotModelTest, TheLeftHandIsExactlyItsSixActiveDex5Joints)
 {
-    // A set: MoveIt sorts a joint-list group. The wire order is pinned by g1_description's xacro
-    // test and test_moveit_config_drift.
-    for (const auto* side : { "left", "right" })
-    {
-        const auto* hand = model_->getJointModelGroup(std::string(side) + "_hand");
-        ASSERT_NE(hand, nullptr) << side;
+    // A set: MoveIt sorts a joint-list group. The order is pinned by g1_description's xacro test
+    // and test_moveit_config_drift. The mimic joints follow these and are not in the group.
+    const auto* hand = model_->getJointModelGroup("left_hand");
+    ASSERT_NE(hand, nullptr);
 
-        std::set<std::string> expected;
-        for (const auto* suffix :
-             { "thumb_0", "thumb_1", "thumb_2", "middle_0", "middle_1", "index_0", "index_1" })
-        {
-            expected.insert(std::string(side) + "_hand_" + suffix + "_joint");
-        }
-        const auto& actual = hand->getActiveJointModelNames();
-        EXPECT_EQ(std::set<std::string>(actual.begin(), actual.end()), expected);
-    }
+    const std::set<std::string> expected = {
+        "left_thumb_1_joint",  "left_thumb_2_joint", "left_index_1_joint",
+        "left_middle_1_joint", "left_ring_1_joint",  "left_little_1_joint",
+    };
+    const auto& actual = hand->getActiveJointModelNames();
+    EXPECT_EQ(std::set<std::string>(actual.begin(), actual.end()), expected);
 }
 
-TEST_F(RobotModelTest, EachHandIsItsArmsEndEffector)
+TEST_F(RobotModelTest, TheRightHandHasNoGroupInTheLeftOnlyMilestone)
+{
+    EXPECT_FALSE(model_->hasJointModelGroup("right_hand"));
+}
+
+TEST_F(RobotModelTest, TheLeftHandIsItsArmsEndEffector)
 {
     // Lets attachObject derive its touch links and RViz offer the hand as the arm's gripper.
-    std::map<std::string, srdf::Model::EndEffector> by_group;
-    for (const auto& effector : srdf_->getEndEffectors())
-    {
-        by_group.emplace(effector.component_group_, effector);
-    }
-    ASSERT_EQ(by_group.size(), 2U) << "expected one end effector per hand";
-
-    for (const auto* side : { "left", "right" })
-    {
-        const auto it = by_group.find(std::string(side) + "_hand");
-        ASSERT_NE(it, by_group.end()) << side;
-        EXPECT_EQ(it->second.parent_link_, std::string(side) + "_hand_palm_link");
-        EXPECT_EQ(it->second.parent_group_, std::string(side) + "_arm");
-    }
+    const auto& effectors = srdf_->getEndEffectors();
+    ASSERT_EQ(effectors.size(), 1U) << "expected the left hand's end effector only";
+    EXPECT_EQ(effectors.front().component_group_, "left_hand");
+    EXPECT_EQ(effectors.front().parent_link_, "left_dex5_base_link");
+    EXPECT_EQ(effectors.front().parent_group_, "left_arm");
 }
 
-TEST_F(RobotModelTest, EachHandHasAnOpenAndAClosedPosture)
+TEST_F(RobotModelTest, TheLeftHandHasOpenClosedAndPinchReadyPostures)
 {
-    // Each must name all seven joints, or the finger left out stays wherever it happened to be.
-    std::map<std::string, std::set<std::string>> poses_by_group;
+    // Each must name all six joints, or the finger left out stays wherever it happened to be.
+    std::set<std::string> poses;
     for (const auto& state : srdf_->getGroupStates())
     {
-        if (state.group_ == "left_hand" || state.group_ == "right_hand")
+        EXPECT_NE(state.group_, "right_hand");
+        if (state.group_ == "left_hand")
         {
-            poses_by_group[state.group_].insert(state.name_);
-            EXPECT_EQ(state.joint_values_.size(), 7U)
-                << state.group_ << " posture '" << state.name_ << "' does not cover the hand";
+            poses.insert(state.name_);
+            EXPECT_EQ(state.joint_values_.size(), 6U)
+                << "left_hand posture '" << state.name_ << "' does not cover the hand";
         }
     }
-    for (const auto* side : { "left", "right" })
-    {
-        EXPECT_EQ(
-            poses_by_group[std::string(side) + "_hand"],
-            (std::set<std::string>{ "open", "closed", "pinch_ready" }));
-    }
+    EXPECT_EQ(poses, (std::set<std::string>{ "open", "closed", "pinch_ready" }));
 }
 
 TEST_F(RobotModelTest, TheNamedPosesAreWithinJointLimits)
