@@ -1,0 +1,12 @@
+<mujoco model="g1_walk_scene">
+  <!-- Wraps whichever world the launch staged as the base, adding the startup weld every
+       unpinned run needs. -->
+  <include file="g1_walk_base.staged.xml"/>
+
+  <equality>
+    <!-- Holds the robot up until every motor has been driven for half a second, when the
+         simulator's SDK bridge releases it by this name. Without it the robot falls before a
+         balance policy exists. -->
+    <weld name="pelvis_startup_hold" body1="pelvis"/>
+  </equality>
+</mujoco>

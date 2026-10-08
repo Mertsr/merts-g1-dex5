@@ -1,0 +1,82 @@
+# Walks the base into arm's reach of a measured object, and backs it out again.
+# See g1_locomotion/README.md.
+g1_base_approach:
+  ros__parameters:
+    # Nav2's topic too; the mission tree never runs the two together.
+    cmd_vel_topic: "/cmd_vel"
+    base_frame: "base_footprint"
+
+    # Speed floors: the gait ignores commands inside its deadband, and lateral needs more than
+    # forward before it tracks.
+    min_speed_x_mps: 0.20
+    min_speed_y_mps: 0.25
+
+    # Ceilings, well inside what the policy tracks, since this runs next to furniture.
+    max_speed_x_mps: 0.40
+    max_speed_y_mps: 0.35
+    max_yaw_rate_rps: 0.60
+
+    # Proportional gains before the floors and ceilings. Yaw has no deadband and no floor.
+    speed_per_m: 1.0
+    yaw_rate_per_rad: 1.0
+
+    # Reverse speed for a retreat, which backs away from a surface blind.
+    retreat_speed_mps: 0.30
+
+    # Zero held while the gait finishes its stride, before the object is re-measured.
+    settle_s: 1.0
+    cmd_rate_hz: 20.0
+
+    # Where the object has to end up in the base frame. Every pick of the ball came from x 0.29 to
+    # 0.32; nearer, the pregrasp has no IK. target_y_m mirrors for the left arm.
+    target_x_m: 0.300
+    target_y_m: -0.220
+
+    # Objects to stand further back from: reaching over a surface to set something down sweeps
+    # the wrist across its face.
+    standoff_object_ids: ["brown_box", "tray_1"]
+    standoff_target_x_m: [0.350, 0.350]
+
+    # How close each axis has to get. The robot coasts 25 to 37 mm forward and 15 to 43 mm
+    # laterally after the command stops, always toward the target.
+    forward_tolerance_m: 0.030
+    lateral_tolerance_m: 0.040
+
+    # Loose on purpose (20 degrees): heading only keeps the robot square to the surface.
+    heading_tolerance_rad: 0.350
+
+    # How far beyond the window's far edge a stopped robot may find the object and still reach it.
+    settle_slack_m: 0.040
+
+    # An object settled up to nudge_band_m outside the window sideways is nudged in with pulses of
+    # nudge_y_s at the lateral floor, too short to commit a stride, up to max_nudges times.
+    nudge_band_m: 0.050
+    nudge_y_s: 0.15
+    max_nudges: 12
+
+    # Nearer than this the object is under the robot and the tree has to re-stage through Nav2.
+    min_forward_m: 0.050
+
+    # How old an object's last sighting may be. The props stand still, and the last half metre to
+    # the storage bench is blind: the hand carrying the ball covers the box.
+    object_timeout_ms: 30000.0
+
+    # How long a missing object pose or base transform is waited out, standing still.
+    lookup_grace_s: 5.0
+
+    default_timeout_s: 900.0
+
+    # Stepping out of Nav2's collision band. Nav2 checks a 0.45 m circle and will not move the
+    # robot once an obstacle is inside it, though the body is still clear.
+    step_clear:
+      costmap_topic: "/local_costmap/costmap"
+      # Nothing may come nearer the base than this on the way out: the body with its arms.
+      body_radius_m: 0.30
+      # Longest straight step tried; further is a job for Nav2 again.
+      max_step_m: 0.80
+      # Walking worth one radian of turning: turns drift the gait, so a longer step can be better.
+      turn_cost_m_per_rad: 0.20
+      # Over the forward deadband, and the retreat's reverse speed.
+      speed_mps: 0.30
+      heading_tolerance_rad: 0.15
+      timeout_s: 20.0

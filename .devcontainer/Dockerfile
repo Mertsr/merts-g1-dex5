@@ -1,0 +1,242 @@
+
+ARG BASE_IMAGE=adyansh04/ros-dev:jazzy
+FROM ${BASE_IMAGE}
+
+ARG ROS_DISTRO=jazzy
+
+# Allow pip installs in distro-managed Python images (required on Ubuntu 24.04+/ROS Jazzy).
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
+
+# ============================================================================
+# EDITOR TOOLING
+# ============================================================================
+# ruff and clang-format are PINNED and .github/ci.Dockerfile pins the same versions; ci.yml
+# fails if they drift. Neither tool's rule set is stable across versions.
+ARG RUFF_VERSION=0.16.1
+ARG LLVM_VERSION=18
+RUN apt-get update && apt-get install -y \
+        clangd-${LLVM_VERSION} clang-format-${LLVM_VERSION} clang-tidy-${LLVM_VERSION} && \
+    update-alternatives --install /usr/bin/clangd clangd /usr/bin/clangd-${LLVM_VERSION} 100 && \
+    update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-${LLVM_VERSION} 100 && \
+    update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-${LLVM_VERSION} 100 && \
+    update-alternatives --install /usr/bin/run-clang-tidy run-clang-tidy /usr/bin/run-clang-tidy-${LLVM_VERSION} 100 && \
+    (python3 -m pip install --no-cache-dir --break-system-packages ruff==${RUFF_VERSION} || \
+     python3 -m pip install --no-cache-dir ruff==${RUFF_VERSION}) && \
+    rm -rf /var/lib/apt/lists/*
+
+# ============================================================================
+# PROJECT-SPECIFIC CUSTOMIZATION
+# ============================================================================
+
+# ros2_control plus unitree_sdk2/mujoco build deps. Mesa GL is for headless Xvfb.
+RUN apt-get update && apt-get install -y \
+        libboost-all-dev \
+        libeigen3-dev \
+        libfmt-dev \
+        libgl1-mesa-dri \
+        libglfw3-dev \
+        libglx-mesa0 \
+        libspdlog-dev \
+        libyaml-cpp-dev \
+        ros-${ROS_DISTRO}-launch-testing \
+        ros-${ROS_DISTRO}-launch-testing-ament-cmake \
+        ros-${ROS_DISTRO}-realtime-tools \
+        ros-${ROS_DISTRO}-ros2-control \
+        ros-${ROS_DISTRO}-ros2-controllers \
+        ros-${ROS_DISTRO}-ros2launch \
+        ros-${ROS_DISTRO}-xacro \
+        xvfb \
+    && rm -rf /var/lib/apt/lists/*
+
+# cc1plus takes 0.5-1 GB, so one job per core OOM-kills a 32-core, 30 GB machine mid-build.
+# Raise on a bigger box with --build-arg BUILD_JOBS=N.
+ARG BUILD_JOBS=8
+
+# --- unitree_sdk2 -----------------------------------------------------------
+ARG UNITREE_SDK2_SHA=21d0a3b2c46ee48c8fdf2783becb6be3beb0a59b
+RUN git init -q /opt/unitree_robotics/unitree_sdk2 && \
+    cd /opt/unitree_robotics/unitree_sdk2 && \
+    git remote add origin https://github.com/unitreerobotics/unitree_sdk2.git && \
+    git fetch --depth 1 origin ${UNITREE_SDK2_SHA} && \
+    git checkout -q FETCH_HEAD && \
+    mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release \
+             -DCMAKE_INSTALL_PREFIX=/opt/unitree_robotics \
+             -DBUILD_EXAMPLES=OFF && \
+    make -j"${BUILD_JOBS}" && \
+    make install && \
+    rm -rf /opt/unitree_robotics/unitree_sdk2
+
+# --- MuJoCo ------------------------------------------------------------------
+ARG MUJOCO_VERSION=3.3.6
+RUN mkdir -p /opt/unitree_robotics/mujoco-${MUJOCO_VERSION} && \
+    curl -fsSL "https://github.com/google-deepmind/mujoco/releases/download/${MUJOCO_VERSION}/mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz" \
+      | tar -xz --strip-components=1 -C /opt/unitree_robotics/mujoco-${MUJOCO_VERSION}
+
+
+# --- CycloneDDS / ROS domain (required by unitree_sdk2) ---------------------
+RUN mkdir -p /etc/cyclonedds && \
+    cat > /etc/cyclonedds/cyclonedds.xml <<'EOF'
+<?xml version="1.0" encoding="UTF-8" ?>
+<CycloneDDS xmlns="https://cdds.io/config"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="https://cdds.io/config https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
+  <Domain id="any">
+    <General>
+      <Interfaces>
+        <NetworkInterface name="lo" priority="default" multicast="default" />
+      </Interfaces>
+    </General>
+    <Discovery>
+      <!-- Default cap of 9 is too low for the multi-node sim stack; raise it. -->
+      <MaxAutoParticipantIndex>60</MaxAutoParticipantIndex>
+    </Discovery>
+  </Domain>
+</CycloneDDS>
+EOF
+
+RUN cat > /etc/cyclonedds/cyclonedds.hardware.xml <<'EOF'
+<?xml version="1.0" encoding="UTF-8" ?>
+<CycloneDDS xmlns="https://cdds.io/config"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="https://cdds.io/config https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
+  <Domain id="any">
+    <General>
+      <Interfaces>
+        <NetworkInterface name="${GROVE_G1_ROBOT_NIC:-eth0}" priority="default" multicast="default" />
+      </Interfaces>
+    </General>
+    <Discovery>
+      <MaxAutoParticipantIndex>60</MaxAutoParticipantIndex>
+    </Discovery>
+  </Domain>
+</CycloneDDS>
+EOF
+
+# ROS runs fastrtps and never loads a CycloneDDS RMW: unitree_sdk2 links its own CycloneDDS
+# inside the hardware component, and two libddsc.so.0 of different ABIs corrupt the heap.
+ENV RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+ENV CYCLONEDDS_URI=file:///etc/cyclonedds/cyclonedds.xml
+ENV ROS_DOMAIN_ID=1
+
+RUN cat > /etc/profile.d/99-grove-g1-env.sh <<'EOF'
+export ROS_DOMAIN_ID="${GROVE_G1_ROS_DOMAIN_ID:-1}"
+EOF
+
+RUN python3 -m pip uninstall -y em empy
+
+# ---LocoClient deps -------------------------------------------
+
+# nlohmann-json: used for the LocoClient wire format (matches vendor's client).
+RUN apt-get update && apt-get install -y nlohmann-json3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- walking-policy deps ---------------------------------------
+
+ARG ONNXRUNTIME_VERSION=1.20.1
+RUN mkdir -p /opt/onnxruntime && \
+    curl -fsSL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz" \
+      | tar -xz --strip-components=1 -C /opt/onnxruntime && \
+    echo /opt/onnxruntime/lib > /etc/ld.so.conf.d/onnxruntime.conf && \
+    ldconfig
+
+# teleop_twist_keyboard for manual velocity testing via ~/cmd_vel.
+RUN apt-get update && apt-get install -y ros-${ROS_DISTRO}-teleop-twist-keyboard \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- ros2_control extras ----------------------------------------
+
+RUN apt-get update && apt-get install -y \
+        ros-${ROS_DISTRO}-ros2-control-cmake \
+        ros-${ROS_DISTRO}-backward-ros \
+        ros-${ROS_DISTRO}-control-toolbox \
+        ros-${ROS_DISTRO}-transmission-interface \
+        ros-${ROS_DISTRO}-tinyxml2-vendor \
+        ros-${ROS_DISTRO}-velocity-controllers \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- SLAM + Nav2 -------------------------------------------------
+
+RUN apt-get update && apt-get install -y \
+        ros-${ROS_DISTRO}-navigation2 \
+        ros-${ROS_DISTRO}-nav2-bringup \
+        ros-${ROS_DISTRO}-slam-toolbox \
+        ros-${ROS_DISTRO}-pointcloud-to-laserscan \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- MoveIt 2 (structured manipulation) --------------------------
+
+RUN apt-get update && apt-get install -y \
+        ros-${ROS_DISTRO}-moveit \
+        ros-${ROS_DISTRO}-moveit-configs-utils \
+        ros-${ROS_DISTRO}-moveit-setup-assistant \
+        ros-${ROS_DISTRO}-moveit-servo \
+        ros-${ROS_DISTRO}-pick-ik \
+        ros-${ROS_DISTRO}-moveit-ros-perception \
+        ros-${ROS_DISTRO}-realsense2-description \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- orchestration + manipulation skills -------------------------
+
+RUN apt-get update && apt-get install -y \
+        ros-${ROS_DISTRO}-behaviortree-cpp \
+        ros-${ROS_DISTRO}-vision-msgs \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN test -e /opt/ros/${ROS_DISTRO}/lib/libbehaviortree_cpp.so || \
+    ln -s "$(dpkg-architecture -qDEB_HOST_MULTIARCH)/libbehaviortree_cpp.so" \
+          /opt/ros/${ROS_DISTRO}/lib/libbehaviortree_cpp.so
+
+# --- LiDAR-inertial odometry ------------------------------------
+
+ARG LIVOX_SDK2_SHA=08f523c930b2f0ba1e98a6afaa8d7476bf479908
+RUN git init -q /tmp/Livox-SDK2 && \
+    cd /tmp/Livox-SDK2 && \
+    git remote add origin https://github.com/Livox-SDK/Livox-SDK2.git && \
+    git fetch --depth 1 origin ${LIVOX_SDK2_SHA} && \
+    git checkout -q FETCH_HEAD && \
+    mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release && \
+    make -j"${BUILD_JOBS}" && \
+    make install && \
+    ldconfig && \
+    rm -rf /tmp/Livox-SDK2
+
+# --- learned grasp ----------------------------------------------
+
+RUN apt-get update && apt-get install -y \
+        python3-zmq \
+        python3-msgpack \
+    && rm -rf /var/lib/apt/lists/* && \
+    (python3 -m pip install --no-cache-dir --no-deps --break-system-packages msgpack-numpy==0.4.8 || \
+     python3 -m pip install --no-cache-dir --no-deps msgpack-numpy==0.4.8)
+
+# --- unitree_mujoco (the `simulate` app) ------------------------------------
+# The submodule workspace/vendor/unitree_mujoco: upstream plus grove-g1's changes, on the grove
+# branch of Adyansh04/unitree_mujoco (its GROVE.md lists them).
+COPY workspace/vendor/unitree_mujoco/ /opt/unitree_robotics/unitree_mujoco/
+RUN cd /opt/unitree_robotics/unitree_mujoco && \
+    { [ -f simulate/CMakeLists.txt ] || \
+      { echo "workspace/vendor/unitree_mujoco is empty: git submodule update --init"; exit 1; }; } && \
+    rm -rf .git simulate/build && \
+    rm -rf simulate/mujoco && \
+    mv /opt/unitree_robotics/mujoco-${MUJOCO_VERSION} simulate/mujoco && \
+    mkdir simulate/build && cd simulate/build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release \
+             -DCMAKE_PREFIX_PATH=/opt/unitree_robotics/lib/cmake && \
+    cmake --build . --target unitree_mujoco --parallel "${BUILD_JOBS}" && \
+    rm -rf CMakeFiles && \
+    rm -rf ../mujoco/sample ../mujoco/bin ../mujoco/doc ../mujoco/model
+
+# --- editor configs -----------------------------------------------------------
+RUN ln -sf /root/.host-repo/.clangd       /root/.clangd && \
+    ln -sf /root/.host-repo/.clang-format /root/.clang-format && \
+    ln -sf /root/.host-repo/.clang-tidy   /root/.clang-tidy && \
+    ln -sf /root/.host-repo/ruff.toml     /root/ruff.toml
+
+# Ensure default workspace exists (mounted from host: ./workspace -> /root/workspace)
+RUN mkdir -p /root/workspace/src
+RUN mkdir -p /root/data/
+
+# Default working directory inside the container
+WORKDIR /root/workspace

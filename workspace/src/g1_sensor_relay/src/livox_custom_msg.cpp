@@ -1,0 +1,77 @@
+/**
+ * @file livox_custom_msg.cpp
+ * @brief The PointCloud2 -> Livox CustomMsg conversion FAST-LIO consumes in simulation.
+ */
+
+#include "g1_sensor_relay/livox_custom_msg.hpp"
+
+#include <cmath>
+#include <cstdint>
+#include <rclcpp/time.hpp>
+#include <sensor_msgs/point_cloud2_iterator.hpp>
+#include <utility>
+
+namespace g1_sensor_relay
+{
+
+bool hasXyzFloatFields(const sensor_msgs::msg::PointCloud2& cloud)
+{
+    int found = 0;
+    for (const auto& field : cloud.fields)
+    {
+        if ((field.name == "x" || field.name == "y" || field.name == "z") &&
+            field.datatype == sensor_msgs::msg::PointField::FLOAT32)
+        {
+            ++found;
+        }
+    }
+    return found == 3;
+}
+
+bool toCustomMsg(const sensor_msgs::msg::PointCloud2& cloud, livox_ros_driver2::msg::CustomMsg& out)
+{
+    // The iterators throw on a missing field, which would take the node down.
+    if (!hasXyzFloatFields(cloud))
+    {
+        return false;
+    }
+
+    sensor_msgs::PointCloud2ConstIterator<float> x(cloud, "x");
+    sensor_msgs::PointCloud2ConstIterator<float> y(cloud, "y");
+    sensor_msgs::PointCloud2ConstIterator<float> z(cloud, "z");
+
+    out.header = cloud.header;
+    // FAST-LIO times scans off header.stamp; the real driver fills this too, so match it.
+    out.timebase = static_cast<std::uint64_t>(rclcpp::Time(cloud.header.stamp).nanoseconds());
+    out.lidar_id = 0;
+    out.points.clear();
+    out.points.reserve(static_cast<std::size_t>(cloud.width) * cloud.height);
+
+    for (; x != x.end(); ++x, ++y, ++z)
+    {
+        // Misses arrive non-finite; dropping them keeps point_num honest.
+        if (!std::isfinite(*x) || !std::isfinite(*y) || !std::isfinite(*z))
+        {
+            continue;
+        }
+        livox_ros_driver2::msg::CustomPoint point;
+        point.x = *x;
+        point.y = *y;
+        point.z = *z;
+        // Correct, not a shortcut: the simulator raycasts a frozen mjData, so the whole sweep
+        // is one instant and undistortion has nothing to undo.
+        point.offset_time = 0;
+        // Both are gates in FAST-LIO's Livox handler, not decoration: `line` must be under
+        // scan_line, and tag bits 4-5 must read 00 or 01 or the point is discarded.
+        point.line = 0;
+        point.tag  = 0;
+        // The sweep carries no intensity, and nothing downstream registers on it.
+        point.reflectivity = 0;
+        out.points.push_back(point);
+    }
+
+    out.point_num = static_cast<std::uint32_t>(out.points.size());
+    return true;
+}
+
+}  // namespace g1_sensor_relay

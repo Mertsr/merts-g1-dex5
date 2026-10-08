@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>g1_state_estimation</name>
+  <version>0.1.0</version>
+  <description>
+    The odom to base_footprint to pelvis chain for the G1, from FAST-LIO2 (robot
+    and simulation) or MuJoCo ground truth (simulation only), plus the hardware
+    Livox CustomMsg to PointCloud2 converter. See README.
+  </description>
+  <maintainer email="gupta.adyansh@gmail.com">Adyansh</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+  <depend>lifecycle_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>livox_ros_driver2</depend>
+  <!-- Launched, never linked. -->
+  <exec_depend>fast_lio</exec_depend>
+  <!-- The sim front end runs its g1_livox_bridge. -->
+  <exec_depend>g1_sensor_relay</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_cmake_lint_cmake</test_depend>
+  <test_depend>ament_cmake_xmllint</test_depend>
+  <test_depend>ament_cmake_gmock</test_depend>
+  <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>g1_description</test_depend>
+  <test_depend>rosgraph_msgs</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

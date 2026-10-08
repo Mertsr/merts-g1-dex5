@@ -1,0 +1,48 @@
+# Hardware parameters for g1_hand_interface/G1Dex3System, one component per hand.
+#
+# Consumed by urdf/g1_common.xacro via xacro.load_yaml: ros2_control plugins only see parameters
+# that arrive as <ros2_control><param> tags.
+
+# Common to both hands.
+system:
+  # Must match lowcmd_params.yaml. ChannelFactory is per process and only its first Init
+  # applies, so a mismatch strands whichever component initialises second.
+  domain_id: 1
+  network_interface: ""
+
+  # Above Unitree's 1.5 teleop grip. Torque is kp times position error, and 2.3 lets a thumb
+  # stalled ~0.6 rad short of its target press at the joint's 1.4 Nm rating. The simulator
+  # clamps at the URDF effort limit either way. kd is the component's 0.2 default times
+  # sqrt(kp / 1.5).
+  kp: 2.3
+  kd: 0.25
+  command_publish_rate: 100.0    # Hz; what Unitree's own teleop publishes at
+  max_joint_velocity_rad_s: 3.0  # rad/s; slew clamp, the only limit between a large
+                                 # trajectory step and a finger moving at motor speed
+  state_timeout_ms: 200.0        # ms; HandState older than this errors the component once
+                                 # active. Activation has its own fixed 5 s wait for a first frame.
+  # Full rate rather than the lower-rate rt/lf/dex3/<side>/state Unitree's Dex3 example reads,
+  # since the staleness gate above needs it. The xacro puts the side between these two.
+  state_topic_prefix: "rt/dex3/"
+  state_topic_suffix: "/state"
+
+# Position limits copied from the URDF, since HardwareInfo does not carry <limit> tags; the
+# component clamps commands to them. Left closes negative, right positive. Unitree's SDK example
+# differs on thumb_1; the URDF matches the published spec.
+#
+# Dex3 wire order: the component refuses to init if the xacro reorders it.
+joints:
+  left_hand_thumb_0_joint:   { min: -1.04719755, max:  1.04719755 }
+  left_hand_thumb_1_joint:   { min: -0.61086523, max:  1.04719755 }
+  left_hand_thumb_2_joint:   { min:  0.0,        max:  1.74532925 }
+  left_hand_middle_0_joint:  { min: -1.57079632, max:  0.0        }
+  left_hand_middle_1_joint:  { min: -1.74532925, max:  0.0        }
+  left_hand_index_0_joint:   { min: -1.57079632, max:  0.0        }
+  left_hand_index_1_joint:   { min: -1.74532925, max:  0.0        }
+  right_hand_thumb_0_joint:  { min: -1.04719755, max:  1.04719755 }
+  right_hand_thumb_1_joint:  { min: -1.04719755, max:  0.61086523 }
+  right_hand_thumb_2_joint:  { min: -1.74532925, max:  0.0        }
+  right_hand_middle_0_joint: { min:  0.0,        max:  1.57079632 }
+  right_hand_middle_1_joint: { min:  0.0,        max:  1.74532925 }
+  right_hand_index_0_joint:  { min:  0.0,        max:  1.57079632 }
+  right_hand_index_1_joint:  { min:  0.0,        max:  1.74532925 }

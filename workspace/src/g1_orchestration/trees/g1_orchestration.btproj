@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Groot2 project for the mission trees. Import the palette once with Import Models, from
+  g1_orchestration_nodes.xml beside this file. After changing a leaf, regenerate it from the
+  workspace root (test_node_model fails on drift):
+
+    ros2 run g1_orchestration g1_bt_node_model \
+      src/g1_orchestration/trees/g1_orchestration_nodes.xml
+-->
+<root BTCPP_format="4" project_name="g1_orchestration">
+  <include path="pick_and_place.xml"/>
+  <include path="pick_and_place_in_place.xml"/>
+  <include path="sort_into_box.xml"/>
+  <include path="vla_grasp_in_place.xml"/>
+</root>

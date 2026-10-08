@@ -1,0 +1,14 @@
+<class_libraries>
+
+  <library path="g1_lowcmd_system">
+    <class name="g1_hardware_interface/G1LowCmdSystem"
+           type="g1_hardware_interface::G1LowCmdSystem"
+           base_class_type="hardware_interface::SystemInterface">
+      <description>
+        ros2_control System owning all 29 G1 body motors over Unitree's rt/lowcmd, with no
+        onboard balance running underneath.
+      </description>
+    </class>
+  </library>
+
+</class_libraries>

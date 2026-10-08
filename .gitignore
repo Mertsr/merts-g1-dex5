@@ -1,0 +1,41 @@
+# ROS 2 workspace build artifacts
+workspace/build/
+workspace/install/
+workspace/log/
+
+# Third-party meshes and textures fetched by scripts/setup-world-assets.sh
+workspace/assets/
+
+# workspace/.clang-format, .clang-tidy, .clangd and ruff.toml are NOT ignored any more.
+# They used to be empty root-owned placeholders that Docker materialised for four
+# single-file bind mounts, hence the ignore. Those mounts are gone; the paths are now
+# committed relative symlinks to the repo-root configs, and the package CMakeLists resolve
+# their lint configs through them (${CMAKE_CURRENT_SOURCE_DIR}/../../<config>).
+
+# Keep source directory structure
+!workspace/src/
+!workspace/src/.gitkeep
+
+# Environment files (keep .env.example)
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+
+# IDE
+.idea/
+workspace/.vscode/
+workspace/src/.vscode/
+
+# Temporary files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db

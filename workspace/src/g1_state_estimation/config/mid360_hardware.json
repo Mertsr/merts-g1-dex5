@@ -1,0 +1,49 @@
+{
+  "_comment": [
+    "Livox-SDK2 config for the Mid360 on the G1. Hardware only.",
+    "Ours, not the driver's config/MID360_config.json, which carries Livox's defaults.",
+    "Host 192.168.123.164 is the robot's Orin; Unitree ships the Mid360 at",
+    "192.168.123.120, not Livox's default 192.168.1.x. Ping both before blaming the driver.",
+    "extrinsic_parameter stays identity: the upside-down mount is in the URDF (mid360_joint),",
+    "and applying it here too would invert the cloud twice."
+  ],
+  "lidar_summary_info": {
+    "lidar_type": 8
+  },
+  "MID360": {
+    "lidar_net_info": {
+      "cmd_data_port": 56100,
+      "push_msg_port": 56200,
+      "point_data_port": 56300,
+      "imu_data_port": 56400,
+      "log_data_port": 56500
+    },
+    "host_net_info": {
+      "cmd_data_ip": "192.168.123.164",
+      "cmd_data_port": 56101,
+      "push_msg_ip": "192.168.123.164",
+      "push_msg_port": 56201,
+      "point_data_ip": "192.168.123.164",
+      "point_data_port": 56301,
+      "imu_data_ip": "192.168.123.164",
+      "imu_data_port": 56401,
+      "log_data_ip": "",
+      "log_data_port": 56501
+    }
+  },
+  "lidar_configs": [
+    {
+      "ip": "192.168.123.120",
+      "pcl_data_type": 1,
+      "pattern_mode": 0,
+      "extrinsic_parameter": {
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0,
+        "x": 0,
+        "y": 0,
+        "z": 0
+      }
+    }
+  ]
+}
