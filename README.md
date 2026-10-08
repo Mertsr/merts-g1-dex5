@@ -27,7 +27,7 @@ adds the arms, lives on the
 - SLAM Toolbox maps a building, AMCL localizes against the saved map, and Nav2 drives to a goal.
   Odometry comes from FAST-LIO2 on the Mid360 LiDAR.
 - MoveIt plans for either arm or both, collision-checked against a live octomap
-  from the LiDAR, and each Dex3-1 hand is a planning group with named postures. Pick and place
+  from the LiDAR, and the left Dex5 hand is a simulated planning group with provisional named postures. Pick and place
   are actions, and a BehaviorTree.CPP tree strings them together with navigation: drive to a bench,
   close the last half metre on the measured object, pick a ball, carry it across the building and
   drop it into a box.
@@ -91,7 +91,7 @@ DDS rail stays the same. Two rules shape the design, and both hold in simulation
 | [`g1_bringup`](workspace/src/g1_bringup) | The entry point: launch files, scenes and config that compose everything below. |
 | [`g1_description`](workspace/src/g1_description) | The G1 URDF and its `ros2_control` xacro wrapper. |
 | [`g1_hardware_interface`](workspace/src/g1_hardware_interface) | `ros2_control` plugin that owns all 29 body motors over `rt/lowcmd`. |
-| [`g1_hand_interface`](workspace/src/g1_hand_interface) | `ros2_control` plugin for one Dex3-1 hand, on the hand's own SDK channels. |
+| [`g1_hand_interface`](workspace/src/g1_hand_interface) | `ros2_control` plugins for hands: a simulated Dex5 backend (used) and the legacy Dex3-1 one on SDK channels (not wired in). |
 | [`g1_controllers`](workspace/src/g1_controllers) | The locomotion policy, its chained safety controller and the freeze controllers. |
 | [`g1_state_estimation`](workspace/src/g1_state_estimation) | Odometry (`odom` to `base_footprint`) and the TF chain Nav2 needs. |
 | [`g1_sensor_relay`](workspace/src/g1_sensor_relay) | The LiDAR, cameras, IMU and object poses sampled inside the simulator. |

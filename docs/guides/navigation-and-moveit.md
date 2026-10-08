@@ -97,7 +97,7 @@ ros2 launch g1_bringup activate_arm.launch.py
 ```
 
 Now plan and execute from RViz's MotionPlanning panel, or send `FollowJointTrajectory` goals to
-`arm_trajectory_controller`, `left_hand_controller` or `right_hand_controller`. Release when done:
+`arm_trajectory_controller`, or `left_hand_controller` (the left Dex5, simulated; the right hand has no controller). Release when done:
 
 ```bash
 ros2 launch g1_bringup deactivate_arm.launch.py

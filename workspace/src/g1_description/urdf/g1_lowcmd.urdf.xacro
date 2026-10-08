@@ -7,6 +7,12 @@
 
   <xacro:property name="lowcmd" value="${xacro.load_yaml('../config/lowcmd_params.yaml')}"/>
 
+  <!-- Which backend drives the Dex5 hand: sim, with no device and no DDS. See
+       config/dex5_params.yaml. An unknown value fails the expansion rather than picking one. -->
+  <xacro:arg name="dex5_backend" default="sim"/>
+  <xacro:property name="dex5_backend" value="$(arg dex5_backend)"/>
+  <xacro:property name="dex5" value="${xacro.load_yaml('../config/dex5_params.yaml')}"/>
+
   <xacro:macro name="g1_lowcmd_joint" params="name">
     <joint name="${name}">
       <command_interface name="position"/>
@@ -21,6 +27,17 @@
       <state_interface name="effort"/>
       <param name="position_only_kp">${lowcmd.joints[name].position_only_kp}</param>
       <param name="position_only_kd">${lowcmd.joints[name].position_only_kd}</param>
+    </joint>
+  </xacro:macro>
+
+  <xacro:macro name="dex5_joint" params="name">
+    <joint name="${name}">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+      <param name="min">${dex5.joints[name].min}</param>
+      <param name="max">${dex5.joints[name].max}</param>
     </joint>
   </xacro:macro>
 
@@ -80,6 +97,26 @@
       <state_interface name="linear_acceleration.y"/>
       <state_interface name="linear_acceleration.z"/>
     </sensor>
+  </ros2_control>
+
+  <!-- The LEFT Dex5 only: its six active joints, in this order, and no mimic joints. A separate
+       component from the body so a hand fault cannot take the arms down, started inactive and
+       activated by the arm bracket. The sim backend opens no DDS channels. The right hand stays in
+       the URDF but has no component yet. -->
+  <ros2_control name="G1Dex5SystemLeft" type="system">
+    <hardware>
+      <plugin>${dex5.backends[dex5_backend]}</plugin>
+      <param name="side">left</param>
+      <param name="max_joint_velocity_rad_s">${dex5.sim.max_joint_velocity_rad_s}</param>
+      <param name="time_constant_s">${dex5.sim.time_constant_s}</param>
+    </hardware>
+
+    <xacro:dex5_joint name="left_thumb_1_joint"/>
+    <xacro:dex5_joint name="left_thumb_2_joint"/>
+    <xacro:dex5_joint name="left_index_1_joint"/>
+    <xacro:dex5_joint name="left_middle_1_joint"/>
+    <xacro:dex5_joint name="left_ring_1_joint"/>
+    <xacro:dex5_joint name="left_little_1_joint"/>
   </ros2_control>
 
 </robot>

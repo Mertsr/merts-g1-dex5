@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Releases the G1 hands and arms, the reverse of activate_arm.
+"""Releases the G1 hand and arms, the reverse of activate_arm.
 
 The arms cannot simply be let go: a joint the component sees unclaimed is left unpowered, so
 arm_freeze_controller comes back in the same switch that takes arm_trajectory_controller out.
@@ -19,10 +19,8 @@ ARM_FREEZE_CONTROLLER = "arm_freeze_controller"
 SERVICE_CALL_TIMEOUT_S = 5.0
 
 # Released first and best-effort: a hand that never came up must not block the arm's release.
-HANDS = (
-    ("G1Dex3SystemLeft", "left_hand_controller"),
-    ("G1Dex3SystemRight", "right_hand_controller"),
-)
+# Left Dex5 only, as in activate_arm.
+HANDS = (("G1Dex5SystemLeft", "left_hand_controller"),)
 
 
 def switch_controller(node, client, activate, deactivate, timeout_s):

@@ -228,7 +228,7 @@ bool G1ManipulationServer::acquire()
 void G1ManipulationServer::initialize()
 {
     // both_arms takes named postures only; pose goals would need the subgroup IK g1.srdf omits.
-    for (const char* name : { "left_arm", "right_arm", "both_arms", "left_hand", "right_hand" })
+    for (const char* name : { "left_arm", "right_arm", "both_arms", "left_hand" })
     {
         MoveGroup& group = groups_.try_emplace(name, shared_from_this(), name).first->second;
         group.setMaxVelocityScalingFactor(velocity_scaling_);
@@ -315,6 +315,13 @@ void G1ManipulationServer::executePick(const std::shared_ptr<GoalHandle<Pick>>& 
     }
     MoveGroup* arm_group  = groupFor(arm.arm_group);
     MoveGroup* hand_group = groupFor(arm.hand_group);
+    if (hand_group == nullptr)
+    {
+        result->success = false;
+        result->message = "no " + arm.hand_group + " group: only the left Dex5 hand is configured";
+        goal_handle->abort(result);
+        return;
+    }
 
     // Every exit leaves the hand open, nothing attached and the scene restored, so a retry starts
     // from a defined state.
@@ -622,6 +629,11 @@ void G1ManipulationServer::executePlace(const std::shared_ptr<GoalHandle<Place>>
     }
     MoveGroup* arm_group  = groupFor(arm.arm_group);
     MoveGroup* hand_group = groupFor(arm.hand_group);
+    if (hand_group == nullptr)
+    {
+        refuse("no " + arm.hand_group + " group: only the left Dex5 hand is configured");
+        return;
+    }
 
     // What this arm holds, from the planning scene; the attach in executePick put it there.
     std::string                          held_id;

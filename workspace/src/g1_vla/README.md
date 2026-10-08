@@ -12,7 +12,7 @@ flowchart LR
     BT["g1_bt_executor"] -- "Grasp" --> S["g1_vla_server"]
     S -- "GetActionChunk" --> E["policy engine"]
     S -- "/check_state_validity" --> MG["move_group"]
-    S -- "FollowJointTrajectory" --> C["arm_trajectory_controller<br/>left/right_hand_controller"]
+    S -- "FollowJointTrajectory" --> C["arm_trajectory_controller<br/>left_hand_controller"]
 ```
 
 ```bash

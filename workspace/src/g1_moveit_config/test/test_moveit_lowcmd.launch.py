@@ -7,8 +7,8 @@ would fall and every later assertion would fail.
 Also covers the ownership invariant: the component leaves any unclaimed joint unpowered, so the
 arm freeze and the trajectory controller trade places in a single switch.
 
-The hands share one process and one ChannelFactory with the body, so a hand that activates and
-moves is the proof the body's SDK init did not shut them out.
+The left Dex5 hand runs on the simulated backend in the same controller_manager: it opens no
+channel of its own, so its activating and moving shows the shared stack carries it.
 """
 
 import os
@@ -58,17 +58,18 @@ ARM_NUDGE = {f"{side}_shoulder_pitch_joint": -0.20 for side in ("left", "right")
     f"{side}_elbow_joint": 0.20 for side in ("left", "right")
 }
 
-# 12 legs + 3 waist + 14 arms + 14 hand joints. move_group will not plan until every joint it
-# models has a state.
-EXPECTED_JOINT_COUNT = 43
+# 12 legs + 3 waist + 14 arms + 6 left Dex5 joints from the controllers, plus the right Dex5's 6
+# placeholder zeros from control.launch.py. move_group will not plan until every joint it models
+# has a state.
+EXPECTED_JOINT_COUNT = 41
 
 LEFT_HAND = [
-    f"left_hand_{suffix}_joint"
-    for suffix in ("thumb_0", "thumb_1", "thumb_2", "middle_0", "middle_1", "index_0", "index_1")
+    f"left_{suffix}_joint"
+    for suffix in ("thumb_1", "thumb_2", "index_1", "middle_1", "ring_1", "little_1")
 ]
 # A closed hand, written out rather than read from g1.srdf, so the expectation does not come
 # from a file under test.
-LEFT_HAND_CLOSED = dict(zip(LEFT_HAND, [0.00, 0.55, 1.40, -1.20, -1.40, -1.20, -1.40], strict=True))
+LEFT_HAND_CLOSED = dict(zip(LEFT_HAND, [1.30, 0.50, 1.15, 1.15, 1.15, 1.15], strict=True))
 
 
 def generate_test_description():
@@ -221,7 +222,7 @@ class TestMoveItLowCmd(unittest.TestCase):
         goal.request.allowed_planning_time = 10.0
         goal.request.max_velocity_scaling_factor = 0.5
         goal.request.max_acceleration_scaling_factor = 0.5
-        # The measured state clamped into the URDF limits, as g1_manipulation does. A Dex3
+        # The measured state clamped into the URDF limits, as g1_manipulation does. A Dex5
         # finger rests exactly at its limit, and a microradian past aborts the plan.
         goal.request.start_state = self._bounded_start_state(targets)
 
@@ -322,13 +323,11 @@ class TestMoveItLowCmd(unittest.TestCase):
         # waist_yaw is deliberately not part of the trade, so acquiring must not disturb it.
         self.assertEqual(states.get("waist_freeze_controller"), "active")
 
-        # The hands come up in the same acquire. One stuck inactive never saw HandState, which is
-        # how a domain or init-order fault on the shared ChannelFactory presents.
+        # The left hand comes up in the same acquire; the right Dex5 has no component or controller.
         components = self._component_states()
-        for name in ("G1Dex3SystemLeft", "G1Dex3SystemRight"):
-            self.assertEqual(components.get(name), "active", f"{name} did not activate")
-        for name in ("left_hand_controller", "right_hand_controller"):
-            self.assertEqual(states.get(name), "active", f"{name} did not activate")
+        self.assertEqual(components.get("G1Dex5SystemLeft"), "active")
+        self.assertEqual(states.get("left_hand_controller"), "active")
+        self.assertNotIn("right_hand_controller", states)
 
         self._assert_still_standing("after acquiring the arms")
 
@@ -351,10 +350,10 @@ class TestMoveItLowCmd(unittest.TestCase):
         self._assert_still_standing("after moving both arms")
 
     def test_07_the_hand_closes_and_opens_through_moveit(self):
-        """A Dex3 is seven joints, so MoveIt drives it as a group, not as a GripperCommand.
+        """A Dex5 is six active joints, so MoveIt drives it as a group, not as a GripperCommand.
 
-        The fingers that come back on /joint_states are the ones the simulator actually moved,
-        so this is the end-to-end proof that G1Dex3System's channel reaches the hand.
+        The fingers that come back on /joint_states are the ones the simulated backend moved, so
+        this is the end-to-end proof that the command reaches G1Dex5SimSystem and back.
         """
         before = {name: self.joint_state[name] for name in LEFT_HAND}
 

@@ -81,75 +81,35 @@ joint_limits:
     has_acceleration_limits: true
     max_acceleration: 2.0
 
-  # G1Dex3System slew-clamps every finger at 3.0 rad/s (g1_description's dex3_params.yaml); the
-  # drift test keeps these under it. Acceleration is higher than the arm's because a finger does
-  # not move the centre of mass.
-  left_hand_thumb_0_joint:
+  # The simulated Dex5 backend caps every finger at 3.0 rad/s (g1_description's dex5_params.yaml);
+  # the drift test keeps these under it. The URDF's own limit is 2.0 rad/s. Acceleration is higher
+  # than the arm's because a finger does not move the centre of mass. Left hand only.
+  left_thumb_1_joint:
     has_velocity_limits: true
     max_velocity: 2.0
     has_acceleration_limits: true
     max_acceleration: 5.0
-  left_hand_thumb_1_joint:
+  left_thumb_2_joint:
     has_velocity_limits: true
     max_velocity: 2.0
     has_acceleration_limits: true
     max_acceleration: 5.0
-  left_hand_thumb_2_joint:
+  left_index_1_joint:
     has_velocity_limits: true
     max_velocity: 2.0
     has_acceleration_limits: true
     max_acceleration: 5.0
-  left_hand_middle_0_joint:
+  left_middle_1_joint:
     has_velocity_limits: true
     max_velocity: 2.0
     has_acceleration_limits: true
     max_acceleration: 5.0
-  left_hand_middle_1_joint:
+  left_ring_1_joint:
     has_velocity_limits: true
     max_velocity: 2.0
     has_acceleration_limits: true
     max_acceleration: 5.0
-  left_hand_index_0_joint:
-    has_velocity_limits: true
-    max_velocity: 2.0
-    has_acceleration_limits: true
-    max_acceleration: 5.0
-  left_hand_index_1_joint:
-    has_velocity_limits: true
-    max_velocity: 2.0
-    has_acceleration_limits: true
-    max_acceleration: 5.0
-  right_hand_thumb_0_joint:
-    has_velocity_limits: true
-    max_velocity: 2.0
-    has_acceleration_limits: true
-    max_acceleration: 5.0
-  right_hand_thumb_1_joint:
-    has_velocity_limits: true
-    max_velocity: 2.0
-    has_acceleration_limits: true
-    max_acceleration: 5.0
-  right_hand_thumb_2_joint:
-    has_velocity_limits: true
-    max_velocity: 2.0
-    has_acceleration_limits: true
-    max_acceleration: 5.0
-  right_hand_middle_0_joint:
-    has_velocity_limits: true
-    max_velocity: 2.0
-    has_acceleration_limits: true
-    max_acceleration: 5.0
-  right_hand_middle_1_joint:
-    has_velocity_limits: true
-    max_velocity: 2.0
-    has_acceleration_limits: true
-    max_acceleration: 5.0
-  right_hand_index_0_joint:
-    has_velocity_limits: true
-    max_velocity: 2.0
-    has_acceleration_limits: true
-    max_acceleration: 5.0
-  right_hand_index_1_joint:
+  left_little_1_joint:
     has_velocity_limits: true
     max_velocity: 2.0
     has_acceleration_limits: true

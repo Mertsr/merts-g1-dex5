@@ -16,7 +16,6 @@ moveit_simple_controller_manager:
   controller_names:
     - arm_trajectory_controller
     - left_hand_controller
-    - right_hand_controller
 
   arm_trajectory_controller:
     type: FollowJointTrajectory
@@ -41,32 +40,19 @@ moveit_simple_controller_manager:
       - right_wrist_yaw_joint
 
   # FollowJointTrajectory, not GripperCommand, which carries one scalar for a one-joint gripper;
-  # a Dex3 has seven independent joints. Not default: MoveIt picks these by joint coverage.
+  # a Dex5 has six independent active joints (the distal ones are URDF mimics). Not default:
+  # MoveIt picks these by joint coverage. Left only: the right Dex5 has no controller yet.
   left_hand_controller:
     type: FollowJointTrajectory
     action_ns: follow_joint_trajectory
     default: false
     joints:
-      - left_hand_thumb_0_joint
-      - left_hand_thumb_1_joint
-      - left_hand_thumb_2_joint
-      - left_hand_middle_0_joint
-      - left_hand_middle_1_joint
-      - left_hand_index_0_joint
-      - left_hand_index_1_joint
-
-  right_hand_controller:
-    type: FollowJointTrajectory
-    action_ns: follow_joint_trajectory
-    default: false
-    joints:
-      - right_hand_thumb_0_joint
-      - right_hand_thumb_1_joint
-      - right_hand_thumb_2_joint
-      - right_hand_middle_0_joint
-      - right_hand_middle_1_joint
-      - right_hand_index_0_joint
-      - right_hand_index_1_joint
+      - left_thumb_1_joint
+      - left_thumb_2_joint
+      - left_index_1_joint
+      - left_middle_1_joint
+      - left_ring_1_joint
+      - left_little_1_joint
 
 trajectory_execution:
   # The arm runs position-only with no gravity compensation, so its measured pose sits below the

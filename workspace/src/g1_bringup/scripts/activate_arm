@@ -3,7 +3,7 @@
 
 G1LowCmdSystem is active from bring-up and holds the arms through arm_freeze_controller. Acquiring
 swaps that for arm_trajectory_controller in one switch, because a joint the component sees
-unclaimed is left unpowered. The hands are separate components and follow, best-effort.
+unclaimed is left unpowered. The hand is a separate component and follows, best-effort.
 
 Nothing moves until the whole body is held and the balance policy has carried the robot for a
 while: arms swinging while it takes over are what knocked the robot down at bring-up.
@@ -13,7 +13,7 @@ of any table in front, and MoveIt cannot plan from a start state in collision.
 
 With --posture sides the arms hang beside the thighs instead, for exploration: at zero the
 forearms point forward, into both cameras' views, and a real detector maps the hands as objects.
---no-hands leaves the Dex3 hands alone.
+--no-hands leaves the Dex5 hand alone.
 
 Python, not C++: one-shot sequencing well under 1 Hz.
 """
@@ -53,12 +53,9 @@ BODY_HOLDERS = (
 SETTLE_S = 3.0
 BODY_TIMEOUT_S = 60.0
 
-# Best-effort: a Dex3 that is absent or not publishing state must not cost the arm, and
-# G1Dex3System refuses to activate without fresh feedback.
-HANDS = (
-    ("G1Dex3SystemLeft", "left_hand_controller"),
-    ("G1Dex3SystemRight", "right_hand_controller"),
-)
+# Best-effort: a hand that fails to activate must not cost the arm. Left Dex5 only; the right hand
+# has no component or controller yet, so asking for it would only fail.
+HANDS = (("G1Dex5SystemLeft", "left_hand_controller"),)
 # Shorter than the arm's: an absent hand should be reported quickly, not waited out twice.
 HAND_ACTIVATE_TIMEOUT_S = 5.0
 
@@ -96,7 +93,7 @@ SERVICE_CALL_TIMEOUT_S = 5.0
 
 def set_component_state(node, client, name, target_state_id, target_label, retry_timeout_s):
     """Bounded retry: controller_manager may not be discovered yet, and activation is legitimately
-    refused when feedback just missed the freshness window (g1_hand_interface's on_activate)."""
+    refused when a backend's feedback just missed its freshness window."""
     deadline = time.monotonic() + retry_timeout_s
     last_error = "no attempt made"
     while time.monotonic() < deadline:
@@ -207,7 +204,7 @@ def move_arms(node, name, timeout_s=20.0):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--posture", choices=sorted(POSTURES), default="clear")
-    parser.add_argument("--no-hands", action="store_true", help="leave the Dex3 hands alone")
+    parser.add_argument("--no-hands", action="store_true", help="leave the Dex5 hand alone")
     args = parser.parse_args(remove_ros_args(sys.argv if argv is None else argv)[1:])
     rclpy.init()
     node = Node("g1_bringup_activate_arm")
@@ -256,7 +253,7 @@ def main(argv=None):
             ):
                 node.get_logger().warning(
                     f"{component} did not come up; the arm is still usable but this hand "
-                    "will not move. Check that it is powered and publishing state."
+                    "will not move. Check the hand backend and its logs."
                 )
 
         if args.posture == "sides":
@@ -278,7 +275,7 @@ def main(argv=None):
             return 1
         node.get_logger().info("the arms are clear and a planner can work from here.")
 
-        node.get_logger().info("activation complete: the arm and both hands are acquired.")
+        node.get_logger().info("activation complete: the arm and the left hand are acquired.")
         return 0
     finally:
         node.destroy_node()

@@ -52,7 +52,7 @@ if(BUILD_TESTING)
             ${_description_dir}/urdf/g1_common.xacro
             ${_description_dir}/urdf/g1_29dof_with_hand_rev_1_0.urdf
             ${_description_dir}/config/lowcmd_params.yaml
-            ${_description_dir}/config/dex3_params.yaml
+            ${_description_dir}/config/dex5_params.yaml
     COMMENT "Expanding g1_lowcmd.urdf.xacro for test_robot_model"
     VERBATIM
   )

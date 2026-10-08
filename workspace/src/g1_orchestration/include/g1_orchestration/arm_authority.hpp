@@ -77,7 +77,7 @@ enum class Acquired : std::uint8_t
 /**
  * @brief Takes the arm, then each hand.
  *
- * The arm is required; each hand is best-effort, so a missing or unpowered Dex3 leaves the arm
+ * The arm is required; each hand is best-effort, so a missing or failed Dex5 leaves the arm
  * usable. Blocks, on a node of its own: spin_until_future_complete throws on an executor's node.
  *
  * @param logger Where progress and failures are reported.
