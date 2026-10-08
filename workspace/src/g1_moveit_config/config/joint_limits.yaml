@@ -83,7 +83,7 @@ joint_limits:
 
   # The simulated Dex5 backend caps every finger at 3.0 rad/s (g1_description's dex5_params.yaml);
   # the drift test keeps these under it. The URDF's own limit is 2.0 rad/s. Acceleration is higher
-  # than the arm's because a finger does not move the centre of mass. Left hand only.
+  # than the arm's because a finger does not move the centre of mass.
   left_thumb_1_joint:
     has_velocity_limits: true
     max_velocity: 2.0
@@ -110,6 +110,36 @@ joint_limits:
     has_acceleration_limits: true
     max_acceleration: 5.0
   left_little_1_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 5.0
+  right_thumb_1_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 5.0
+  right_thumb_2_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 5.0
+  right_index_1_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 5.0
+  right_middle_1_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 5.0
+  right_ring_1_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 5.0
+  right_little_1_joint:
     has_velocity_limits: true
     max_velocity: 2.0
     has_acceleration_limits: true

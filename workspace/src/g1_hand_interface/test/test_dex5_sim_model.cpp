@@ -38,6 +38,12 @@ TEST(Dex5SimModel, JointOrderIsThumbThenIndexMiddleRingLittleActiveJointsOnly)
     EXPECT_EQ(dex5JointName("left", 3), "left_middle_1_joint");
     EXPECT_EQ(dex5JointName("left", 4), "left_ring_1_joint");
     EXPECT_EQ(dex5JointName("left", 5), "left_little_1_joint");
+    EXPECT_EQ(dex5JointName("right", 0), "right_thumb_1_joint");
+    EXPECT_EQ(dex5JointName("right", 1), "right_thumb_2_joint");
+    EXPECT_EQ(dex5JointName("right", 2), "right_index_1_joint");
+    EXPECT_EQ(dex5JointName("right", 3), "right_middle_1_joint");
+    EXPECT_EQ(dex5JointName("right", 4), "right_ring_1_joint");
+    EXPECT_EQ(dex5JointName("right", 5), "right_little_1_joint");
     // The distal mimics (thumb_3, thumb_4, *_2) must never become claimable names.
     for (const char* suffix : kDex5JointSuffixes)
     {
@@ -174,6 +180,26 @@ TEST(Dex5SimModel, StopZeroesVelocityAndKeepsPosition)
     model.stop();
     EXPECT_EQ(model.position(), position);
     for (const double v : model.velocity())
+    {
+        EXPECT_EQ(v, 0.0);
+    }
+}
+
+TEST(Dex5SimModel, TwoHandsAreIndependentModels)
+{
+    // One model per component: driving the right hand must not move the left.
+    Dex5SimModel left  = makeModel();
+    Dex5SimModel right = makeModel();
+    left.reset({ 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 });
+    right.reset({ 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 });
+    right.step({ 1.0, 0.5, 1.0, 1.0, 1.0, 1.0 }, 0.01);
+    for (std::size_t i = 0; i < kNumDex5Joints; ++i)
+    {
+        EXPECT_EQ(left.position()[i], 0.0);
+        EXPECT_GT(right.position()[i], 0.0);
+    }
+    right.stop();
+    for (const double v : right.velocity())
     {
         EXPECT_EQ(v, 0.0);
     }

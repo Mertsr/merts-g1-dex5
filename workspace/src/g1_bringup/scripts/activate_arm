@@ -53,9 +53,11 @@ BODY_HOLDERS = (
 SETTLE_S = 3.0
 BODY_TIMEOUT_S = 60.0
 
-# Best-effort: a hand that fails to activate must not cost the arm. Left Dex5 only; the right hand
-# has no component or controller yet, so asking for it would only fail.
-HANDS = (("G1Dex5SystemLeft", "left_hand_controller"),)
+# Best-effort: a hand that fails to activate must not cost the arm or the other hand.
+HANDS = (
+    ("G1Dex5SystemLeft", "left_hand_controller"),
+    ("G1Dex5SystemRight", "right_hand_controller"),
+)
 # Shorter than the arm's: an absent hand should be reported quickly, not waited out twice.
 HAND_ACTIVATE_TIMEOUT_S = 5.0
 
@@ -275,7 +277,9 @@ def main(argv=None):
             return 1
         node.get_logger().info("the arms are clear and a planner can work from here.")
 
-        node.get_logger().info("activation complete: the arm and the left hand are acquired.")
+        node.get_logger().info(
+            "activation complete: the arm is acquired, and each hand that came up."
+        )
         return 0
     finally:
         node.destroy_node()

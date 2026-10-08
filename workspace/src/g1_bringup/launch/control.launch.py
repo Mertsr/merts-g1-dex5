@@ -62,9 +62,10 @@ def _controllers(pin_pelvis):
         (["arm_freeze_controller"], []),
         *legs,
         (["arm_trajectory_controller"], ["--inactive"]),
-        # Left Dex5 only: the right hand has no component, so a spawner for it would fail on
-        # interfaces that do not exist.
+        # One per Dex5 hand, each owned by its own component, so a hand that fails to come up
+        # leaves the other and the arms alone.
         (["left_hand_controller"], ["--inactive"]),
+        (["right_hand_controller"], ["--inactive"]),
     ]
 
 
@@ -77,37 +78,6 @@ def _spawners(pin_pelvis):
         )
         for names, extra in _controllers(pin_pelvis)
     ]
-
-
-# The right Dex5 stays in the URDF with no component, but MoveIt's CurrentStateMonitor waits for a
-# state on every non-mimic joint of the model before it plans. These are therefore reported at zero
-# on /joint_states: a placeholder, not a measurement, and nothing can command them.
-RIGHT_DEX5_JOINTS = [
-    f"right_{joint}_joint"
-    for joint in ("thumb_1", "thumb_2", "index_1", "middle_1", "ring_1", "little_1")
-]
-
-
-def _right_dex5_placeholder_state():
-    message = (
-        "{header: {stamp: now}, "
-        f"name: [{', '.join(RIGHT_DEX5_JOINTS)}], "
-        f"position: [{', '.join('0.0' for _ in RIGHT_DEX5_JOINTS)}]}}"
-    )
-    return ExecuteProcess(
-        cmd=[
-            "ros2",
-            "topic",
-            "pub",
-            "--rate",
-            "10",
-            "/joint_states",
-            "sensor_msgs/msg/JointState",
-            message,
-        ],  # fmt: skip
-        name="right_dex5_placeholder_state",
-        output="log",
-    )
 
 
 def _robot_state_publisher():
@@ -144,7 +114,6 @@ def _launch_setup(context, *args, **kwargs):
         _robot_state_publisher(),
         control_node,
         *_spawners(pin_pelvis),
-        _right_dex5_placeholder_state(),
         # Tear down the whole launch if controller_manager dies.
         RegisterEventHandler(
             OnProcessExit(

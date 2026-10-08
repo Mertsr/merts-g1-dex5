@@ -2,8 +2,8 @@
 # xacro.load_yaml: ros2_control plugins only see parameters that arrive as <ros2_control><param>
 # tags.
 #
-# Only the LEFT hand has a component in this milestone. The right Dex5 stays in the URDF but is
-# not claimed, and no right-hand controller is spawned.
+# Both hands have a component (G1Dex5SystemLeft and G1Dex5SystemRight), each claiming only its own
+# six active joints. The right limits are the right URDF's, which equal the left's.
 
 # Selected with the xacro argument dex5_backend (default sim). Every backend implements the same
 # six joints and interfaces, so the controllers and MoveIt configuration do not change with it.
@@ -28,3 +28,9 @@ joints:
   left_middle_1_joint: { min: 0.0, max: 1.4381 }
   left_ring_1_joint:   { min: 0.0, max: 1.4381 }
   left_little_1_joint: { min: 0.0, max: 1.4381 }
+  right_thumb_1_joint:  { min: 0.0, max: 1.658 }
+  right_thumb_2_joint:  { min: 0.0, max: 0.62 }
+  right_index_1_joint:  { min: 0.0, max: 1.4381 }
+  right_middle_1_joint: { min: 0.0, max: 1.4381 }
+  right_ring_1_joint:   { min: 0.0, max: 1.4381 }
+  right_little_1_joint: { min: 0.0, max: 1.4381 }

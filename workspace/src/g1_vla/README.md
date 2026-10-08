@@ -12,7 +12,7 @@ flowchart LR
     BT["g1_bt_executor"] -- "Grasp" --> S["g1_vla_server"]
     S -- "GetActionChunk" --> E["policy engine"]
     S -- "/check_state_validity" --> MG["move_group"]
-    S -- "FollowJointTrajectory" --> C["arm_trajectory_controller<br/>left_hand_controller"]
+    S -- "FollowJointTrajectory" --> C["arm_trajectory_controller<br/>left/right_hand_controller"]
 ```
 
 ```bash
@@ -52,6 +52,12 @@ keeps the hands on trajectories. Validation is the same in both, and the
 | Publisher and service client (servo mode) | `servo_topic`, `/servo_node/switch_command_type` | `control_msgs/msg/JointJog`, `moveit_msgs/srv/ServoCommandType` |
 | Subscriber | `/objects`, `/joint_states` | `vision_msgs/msg/Detection3DArray`, `sensor_msgs/msg/JointState` |
 | Service server (engines) | `~/get_action_chunk`, remapped by the launch to the name above | `g1_msgs/srv/GetActionChunk` |
+
+> **Dex5 caveat:** the server maps `left_hand_controller` and `right_hand_controller` to the
+> `left_hand` and `right_hand` groups from the model, so both simulated Dex5 hands are reachable.
+> The GR00T adapter's hand joint names, `config/joint_limits.yaml` and grip semantics are still
+> Dex3-based (`left_hand_*_joint`) and have not been re-derived for Dex5; Dex5 VLA grasping is not
+> supported or validated.
 
 The GR00T adapter also reads `/joint_states`, the image topics in `video_topics` (sensor QoS), and
 TF for the wrist poses. A chunk carries absolute joint positions for any subset of the 14 arm and

@@ -99,10 +99,10 @@
     </sensor>
   </ros2_control>
 
-  <!-- The LEFT Dex5 only: its six active joints, in this order, and no mimic joints. A separate
-       component from the body so a hand fault cannot take the arms down, started inactive and
-       activated by the arm bracket. The sim backend opens no DDS channels. The right hand stays in
-       the URDF but has no component yet. -->
+  <!-- Each Dex5: its six active joints, in this order, and no mimic joints. One component per
+       hand, separate from the body and from each other so a hand fault cannot take the arms or the
+       other hand down, started inactive and activated by the arm bracket. The sim backend opens
+       no DDS channels. -->
   <ros2_control name="G1Dex5SystemLeft" type="system">
     <hardware>
       <plugin>${dex5.backends[dex5_backend]}</plugin>
@@ -117,6 +117,22 @@
     <xacro:dex5_joint name="left_middle_1_joint"/>
     <xacro:dex5_joint name="left_ring_1_joint"/>
     <xacro:dex5_joint name="left_little_1_joint"/>
+  </ros2_control>
+
+  <ros2_control name="G1Dex5SystemRight" type="system">
+    <hardware>
+      <plugin>${dex5.backends[dex5_backend]}</plugin>
+      <param name="side">right</param>
+      <param name="max_joint_velocity_rad_s">${dex5.sim.max_joint_velocity_rad_s}</param>
+      <param name="time_constant_s">${dex5.sim.time_constant_s}</param>
+    </hardware>
+
+    <xacro:dex5_joint name="right_thumb_1_joint"/>
+    <xacro:dex5_joint name="right_thumb_2_joint"/>
+    <xacro:dex5_joint name="right_index_1_joint"/>
+    <xacro:dex5_joint name="right_middle_1_joint"/>
+    <xacro:dex5_joint name="right_ring_1_joint"/>
+    <xacro:dex5_joint name="right_little_1_joint"/>
   </ros2_control>
 
 </robot>

@@ -180,7 +180,7 @@ simulator's name.
 
 ### Authority
 
-The arms and the left Dex5 hand are taken once, before the first tick, when any skill needs them, and not per
+The arms and both Dex5 hands (each best-effort, left then right, released in reverse) are taken once, before the first tick, when any skill needs them, and not per
 skill: a released Dex3 hand goes limp and drops what it holds. `base` is a name only. However a
 mission ends (success, failure, cancel, watchdog, exception, stop) the arms are released only if no
 hand holds something, or may; otherwise they are kept, `RobotState` says so, and the next mission that

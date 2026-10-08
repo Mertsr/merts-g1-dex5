@@ -89,11 +89,13 @@ The steps follow the feedback phases.
    `place_confirm_timeout_s`, inside the surface's footprint (or within `place_tolerance_m` of a
    `pose`).
 
-> **Dex5 status:** only the left Dex5 hand is wired for control, in simulation (`left_hand` group,
-> `G1Dex5SimSystem`). The grasp geometry, grip check and hand-contact logic below were written for
-> the Dex3 and have not been re-derived for Dex5, and a right-arm pick or place is refused because
-> there is no `right_hand` group. `g1_perception`'s GraspGenX adapter keeps its Dex3 assets. These are
-> outside the simulation-only milestone.
+> **Dex5 status:** both Dex5 hands are wired for control, in simulation (`left_hand` and
+> `right_hand` groups, `G1Dex5SimSystem`), so `set_arm_posture` can pose either hand. The grasp
+> geometry, grip check, hand-contact logic and `pinch_ready`/`closed` use in pick and place below
+> were written for the Dex3 and have not been re-derived or validated for Dex5 on either side; do not
+> read the presence of a `right_hand` group as working Dex5 grasping. `g1_perception`'s GraspGenX
+> adapter keeps its Dex3 assets. The wrist mounts are unverified placeholders and the hand meshes and
+> calibration are not committed.
 
 ## Grasp geometry
 

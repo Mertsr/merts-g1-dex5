@@ -166,6 +166,7 @@ const std::vector<ControlledPart>& controlledParts()
     static const std::vector<ControlledPart> parts = {
         { "", "arm_trajectory_controller", "arm_freeze_controller" },
         { "G1Dex5SystemLeft", "left_hand_controller", "" },
+        { "G1Dex5SystemRight", "right_hand_controller", "" },
     };
     return parts;
 }

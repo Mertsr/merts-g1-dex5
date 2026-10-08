@@ -19,8 +19,11 @@ ARM_FREEZE_CONTROLLER = "arm_freeze_controller"
 SERVICE_CALL_TIMEOUT_S = 5.0
 
 # Released first and best-effort: a hand that never came up must not block the arm's release.
-# Left Dex5 only, as in activate_arm.
-HANDS = (("G1Dex5SystemLeft", "left_hand_controller"),)
+# Both Dex5 hands, as in activate_arm.
+HANDS = (
+    ("G1Dex5SystemLeft", "left_hand_controller"),
+    ("G1Dex5SystemRight", "right_hand_controller"),
+)
 
 
 def switch_controller(node, client, activate, deactivate, timeout_s):

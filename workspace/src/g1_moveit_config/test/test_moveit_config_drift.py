@@ -1,7 +1,7 @@
 """Numbers that must agree across packages, where neither package's own tests can see the pair.
 
 MoveIt's idea of the arm lives here, the controllers' in g1_controllers and the hand's speed
-clamp in g1_description. Only the left Dex5 hand is wired in this milestone. No simulator, no ROS graph.
+clamp in g1_description. Both Dex5 hands are wired. No simulator, no ROS graph.
 """
 
 import os
@@ -33,14 +33,17 @@ ARM_JOINTS = [
     )
 ]
 
-# The six active Dex5 joints in the order G1Dex5SystemLeft claims them. The distal mimic joints
-# are never listed. Only the left hand has a component and controller.
+# The six active Dex5 joints in the order G1Dex5SystemLeft and G1Dex5SystemRight claim them. The
+# distal mimic joints are never listed.
 HAND_JOINTS = {
-    "left": [
-        f"left_{joint}_joint"
+    side: [
+        f"{side}_{joint}_joint"
         for joint in ("thumb_1", "thumb_2", "index_1", "middle_1", "ring_1", "little_1")
-    ],
+    ]
+    for side in ("left", "right")
 }
+SIDES = ("left", "right")
+COMPONENTS = {"left": "G1Dex5SystemLeft", "right": "G1Dex5SystemRight"}
 MIMIC_JOINTS = (
     "thumb_3", "thumb_4", "index_2", "middle_2", "ring_2", "little_2",
 )  # fmt: skip
@@ -112,7 +115,7 @@ def test_planned_hand_speed_stays_under_the_clamp(joint_limits):
     The body component has no such clamp, so there is nothing to check the arm against.
     """
     clamp = _load(DESCRIPTION_CONFIG_DIR, "dex5_params.yaml")["sim"]["max_joint_velocity_rad_s"]
-    for joint in HAND_JOINTS["left"]:
+    for joint in HAND_JOINTS["left"] + HAND_JOINTS["right"]:
         limits = joint_limits[joint]
         assert limits["has_velocity_limits"] is True, joint
         assert limits["max_velocity"] < clamp, (
@@ -131,23 +134,25 @@ def test_every_arm_joint_has_an_acceleration_limit(joint_limits):
 
 
 def test_joint_limits_cover_exactly_what_we_command(joint_limits):
-    """Everything MoveIt commands and nothing else: the arms plus the left hand.
+    """Everything MoveIt commands and nothing else: the arms plus both hands.
 
     A joint missing here is timed against no limit at all; a leg or waist joint here would claim
     a limit on something the balance policy or the waist freeze owns.
     """
-    expected = ARM_JOINTS + HAND_JOINTS["left"]
+    expected = ARM_JOINTS + HAND_JOINTS["left"] + HAND_JOINTS["right"]
     assert sorted(joint_limits) == sorted(expected)
 
 
-def test_the_hand_agrees_across_srdf_controller_and_moveit(srdf, controllers, moveit_controllers):
+@pytest.mark.parametrize("side", SIDES)
+def test_the_hand_agrees_across_srdf_controller_and_moveit(
+    srdf, controllers, moveit_controllers, side
+):
     """Three files have to name the same six joints in the same order, and the hardware
     component's xacro claims the same ones (test_lowcmd_xacro).
 
     The JTC remaps by name. MoveIt's RobotModel sorts a joint-list group, so only the files can
     pin this order.
     """
-    side = "left"
     group = next(g for g in srdf.findall("group") if g.get("name") == f"{side}_hand")
     controller = f"{side}_hand_controller"
 
@@ -159,49 +164,68 @@ def test_the_hand_agrees_across_srdf_controller_and_moveit(srdf, controllers, mo
     )
 
 
-def test_no_hand_list_names_a_mimic_joint(srdf, controllers, moveit_controllers):
+def test_no_hand_list_names_a_mimic_joint(srdf, controllers, moveit_controllers, joint_limits):
     """The mimic joints follow their driver through the URDF and must never be commanded."""
-    named = set()
+    named = set(joint_limits)
     named |= {j.get("name") for g in srdf.findall("group") for j in g.findall("joint")}
-    named |= set(controllers["left_hand_controller"]["ros__parameters"]["joints"])
-    named |= set(
-        moveit_controllers["moveit_simple_controller_manager"]["left_hand_controller"]["joints"]
-    )
+    manager = moveit_controllers["moveit_simple_controller_manager"]
+    for side in SIDES:
+        named |= set(controllers[f"{side}_hand_controller"]["ros__parameters"]["joints"])
+        named |= set(manager[f"{side}_hand_controller"]["joints"])
     named |= {j.get("name") for s in srdf.findall("group_state") for j in s.findall("joint")}
     for name in named:
         assert not any(name.endswith(f"_{mimic}_joint") for mimic in MIMIC_JOINTS), name
 
 
-def test_the_right_hand_is_not_wired_in_the_left_only_milestone(
-    srdf, controllers, moveit_controllers, joint_limits
+def test_both_hands_are_wired_into_moveit_and_the_controller_manager(
+    srdf, controllers, moveit_controllers
 ):
-    """Advertising a right-hand controller would spawn one for interfaces that do not exist."""
     manager = moveit_controllers["moveit_simple_controller_manager"]
-    assert "right_hand_controller" not in manager
-    assert "right_hand_controller" not in manager["controller_names"]
-    assert "right_hand_controller" not in controllers
-    assert "right_hand_controller" not in controllers["controller_manager"]["ros__parameters"]
-    assert not [g for g in srdf.findall("group") if g.get("name") == "right_hand"]
-    assert not [e for e in srdf.findall("end_effector") if e.get("group") == "right_hand"]
-    assert not [s for s in srdf.findall("group_state") if s.get("group") == "right_hand"]
-    assert not [j for j in joint_limits if j.startswith("right_") and "_hand_" in j]
-    assert not [j for j in joint_limits if j.startswith("right_") and j.endswith("_1_joint")]
+    assert manager["controller_names"] == [
+        "arm_trajectory_controller",
+        "left_hand_controller",
+        "right_hand_controller",
+    ]
+    cm = controllers["controller_manager"]["ros__parameters"]
+    for side in SIDES:
+        assert cm[f"{side}_hand_controller"]["type"] == (
+            "joint_trajectory_controller/JointTrajectoryController"
+        )
+        assert [e for e in srdf.findall("end_effector") if e.get("group") == f"{side}_hand"]
+    assert {e.get("parent_group") for e in srdf.findall("end_effector")} == {
+        "left_arm",
+        "right_arm",
+    }
 
 
-def test_bringup_spawns_no_right_hand_controller_and_reports_its_joints_at_zero():
-    """A spawner for a controller that is not configured would fail at launch. The right Dex5's
-    joints still need a state, because MoveIt's CurrentStateMonitor waits on every joint."""
+def test_the_hands_never_join_an_arm_group_and_the_arms_stay_14_joints(
+    srdf, controllers, moveit_controllers
+):
+    hand = set(HAND_JOINTS["left"] + HAND_JOINTS["right"])
+    for group in srdf.findall("group"):
+        if group.get("name") in ("left_arm", "right_arm", "both_arms"):
+            assert not {j.get("name") for j in group.findall("joint")} & hand
+    arm_joints = controllers["arm_trajectory_controller"]["ros__parameters"]["joints"]
+    assert arm_joints == ARM_JOINTS
+    assert not set(arm_joints) & hand
+
+
+def test_bringup_spawns_both_hand_controllers_inactive_and_publishes_no_fake_state():
+    """Each hand component provides its own joint states, so nothing may publish placeholders."""
     with open(os.path.join(BRINGUP_LAUNCH_DIR, "control.launch.py")) as handle:
         text = handle.read()
-    assert '["left_hand_controller"]' in text
-    assert '["right_hand_controller"]' not in text
-    assert "RIGHT_DEX5_JOINTS" in text
+    assert '(["left_hand_controller"], ["--inactive"])' in text
+    assert '(["right_hand_controller"], ["--inactive"])' in text
+    assert "placeholder_state" not in text
+    assert "RIGHT_DEX5_JOINTS" not in text
+    assert '"topic"' not in text
+    assert "/joint_states" not in text
 
 
 def test_the_named_hand_postures_stay_inside_the_dex5_limits(srdf):
     joints = _load(DESCRIPTION_CONFIG_DIR, "dex5_params.yaml")["joints"]
     for state in srdf.findall("group_state"):
-        if state.get("group") != "left_hand":
+        if state.get("group") not in ("left_hand", "right_hand"):
             continue
         for joint in state.findall("joint"):
             limits = joints[joint.get("name")]
@@ -210,9 +234,12 @@ def test_the_named_hand_postures_stay_inside_the_dex5_limits(srdf):
             )
 
 
-def test_the_left_hand_component_is_the_only_hand_started_inactive(controllers):
+def test_both_hand_components_start_inactive(controllers):
     initial = controllers["controller_manager"]["ros__parameters"]
-    assert initial["hardware_components_initial_state"]["inactive"] == ["G1Dex5SystemLeft"]
+    assert initial["hardware_components_initial_state"]["inactive"] == [
+        "G1Dex5SystemLeft",
+        "G1Dex5SystemRight",
+    ]
 
 
 def test_the_hand_is_driven_as_a_trajectory_not_a_gripper_command(moveit_controllers):
@@ -221,20 +248,34 @@ def test_the_hand_is_driven_as_a_trajectory_not_a_gripper_command(moveit_control
     A Dex5 has six independent active joints, so it is driven as a planning group with named
     postures. Switching this to GripperCommand would leave five of them uncommanded.
     """
-    entry = moveit_controllers["moveit_simple_controller_manager"]["left_hand_controller"]
-    assert entry["type"] == "FollowJointTrajectory"
-    assert entry["default"] is False
+    for side in SIDES:
+        entry = moveit_controllers["moveit_simple_controller_manager"][f"{side}_hand_controller"]
+        assert entry["type"] == "FollowJointTrajectory"
+        assert entry["default"] is False
 
 
-def test_the_left_hand_has_an_open_and_a_closed_posture(srdf):
+@pytest.mark.parametrize("side", SIDES)
+def test_each_hand_has_the_same_open_pinch_ready_and_closed_postures(srdf, side):
     """The postures a pick and place needs, each naming all six joints and staying in range."""
+
     states = {
-        s.get("name"): s for s in srdf.findall("group_state") if s.get("group") == "left_hand"
+        s.get("name"): s for s in srdf.findall("group_state") if s.get("group") == f"{side}_hand"
     }
     assert set(states) == {"open", "closed", "pinch_ready"}
     for name, state in states.items():
-        named = {j.get("name") for j in state.findall("joint")}
-        assert named == set(HAND_JOINTS["left"]), f"left {name} does not cover the hand"
+        named = [j.get("name") for j in state.findall("joint")]
+        assert named == HAND_JOINTS[side], f"{side} {name} does not cover the hand"
+
+
+def test_the_hands_use_identical_posture_values(srdf):
+    def postures(which):
+        return {
+            s.get("name"): [float(j.get("value")) for j in s.findall("joint")]
+            for s in srdf.findall("group_state")
+            if s.get("group") == f"{which}_hand"
+        }
+
+    assert postures("left") == postures("right")
 
 
 def test_the_home_state_lists_the_arm_joints_in_motor_order(srdf):

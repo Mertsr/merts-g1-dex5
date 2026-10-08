@@ -30,10 +30,9 @@
     <group name="right_arm"/>
   </group>
 
-  <!-- The left Dex5 hand: its six active joints, in the order G1Dex5SystemLeft claims them. The
-       mimic joints follow these through the URDF and are not listed. Never part of an arm group:
-       the hand is a separate component with its own controller. There is no right_hand group
-       because the right Dex5 has no controller yet. -->
+  <!-- Each Dex5 hand: its six active joints, in the order G1Dex5SystemLeft or G1Dex5SystemRight
+       claims them. The mimic joints follow these through the URDF and are not listed. Never part
+       of an arm group: each hand is a separate component with its own controller. -->
   <group name="left_hand">
     <joint name="left_thumb_1_joint"/>
     <joint name="left_thumb_2_joint"/>
@@ -43,10 +42,20 @@
     <joint name="left_little_1_joint"/>
   </group>
 
-  <!-- Lets attachObject derive its touch links and RViz offer the hand as the arm's gripper.
-       Left only, like the controller. -->
+  <group name="right_hand">
+    <joint name="right_thumb_1_joint"/>
+    <joint name="right_thumb_2_joint"/>
+    <joint name="right_index_1_joint"/>
+    <joint name="right_middle_1_joint"/>
+    <joint name="right_ring_1_joint"/>
+    <joint name="right_little_1_joint"/>
+  </group>
+
+  <!-- Lets attachObject derive its touch links and RViz offer each hand as its arm's gripper. -->
   <end_effector name="left_gripper" parent_link="left_dex5_base_link"
                 group="left_hand" parent_group="left_arm"/>
+  <end_effector name="right_gripper" parent_link="right_dex5_base_link"
+                group="right_hand" parent_group="right_arm"/>
 
   <!-- No passive_joint for the legs and waist: CurrentStateMonitor still waits on every active
        joint, so the flag would imply an exemption it does not give. -->
@@ -273,7 +282,7 @@
     <joint name="right_wrist_yaw_joint" value="0.00"/>
   </group_state>
 
-  <!-- Left Dex5 postures: open, pinch_ready and closed, each naming all six active joints.
+  <!-- Dex5 postures for each hand, identical per side: open, pinch_ready and closed, each naming all six active joints.
        PROVISIONAL: chosen from the URDF ranges (0 to 1.658, 0 to 0.62 and 0 to 1.4381 rad) and
        not checked against a grasp, because the mounts are zero placeholders and the meshes are not
        committed. `open` is the URDF zero, fingers straight. `pinch_ready` brings the thumb partway
@@ -302,6 +311,30 @@
     <joint name="left_middle_1_joint" value="1.15"/>
     <joint name="left_ring_1_joint" value="1.15"/>
     <joint name="left_little_1_joint" value="1.15"/>
+  </group_state>
+  <group_state name="open" group="right_hand">
+    <joint name="right_thumb_1_joint" value="0.00"/>
+    <joint name="right_thumb_2_joint" value="0.00"/>
+    <joint name="right_index_1_joint" value="0.00"/>
+    <joint name="right_middle_1_joint" value="0.00"/>
+    <joint name="right_ring_1_joint" value="0.00"/>
+    <joint name="right_little_1_joint" value="0.00"/>
+  </group_state>
+  <group_state name="pinch_ready" group="right_hand">
+    <joint name="right_thumb_1_joint" value="0.80"/>
+    <joint name="right_thumb_2_joint" value="0.00"/>
+    <joint name="right_index_1_joint" value="0.00"/>
+    <joint name="right_middle_1_joint" value="0.00"/>
+    <joint name="right_ring_1_joint" value="0.00"/>
+    <joint name="right_little_1_joint" value="0.00"/>
+  </group_state>
+  <group_state name="closed" group="right_hand">
+    <joint name="right_thumb_1_joint" value="1.30"/>
+    <joint name="right_thumb_2_joint" value="0.50"/>
+    <joint name="right_index_1_joint" value="1.15"/>
+    <joint name="right_middle_1_joint" value="1.15"/>
+    <joint name="right_ring_1_joint" value="1.15"/>
+    <joint name="right_little_1_joint" value="1.15"/>
   </group_state>
 
   <!-- Generated: links joined by a joint (Adjacent) and links touching at rest per
