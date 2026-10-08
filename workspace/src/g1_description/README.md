@@ -1,14 +1,13 @@
 # g1_description
 
-The Unitree G1 robot description: a vendored, kinematics-only URDF plus the xacro wrappers that
-add the `ros2_control` blocks for the body motors and the two hands. `ament_cmake`, no compiled
-code.
+The G1 robot description: a plain URDF containing the G1 body and bilateral RH56E2 (Dex5) hands,
+plus xacro wrappers that add shared sensor frames and the body's `ros2_control` block.
 
 ```mermaid
 flowchart LR
-    V["g1_29dof_with_hand_rev_1_0.urdf<br/>vendored"] --> C
-    D["dex3_params.yaml<br/>cameras.yaml"] -- "xacro.load_yaml" --> C
-    C["g1_common.xacro<br/>sensor and grasp frames, both hands"] --> X["g1_lowcmd.urdf.xacro<br/>body component"]
+    V["g1_29dof_with_hand_rev_1_0.urdf<br/>G1 body + Dex5 hands"] --> C
+    D["cameras.yaml"] -- "xacro.load_yaml" --> C
+    C["g1_common.xacro<br/>includes host URDF + sensor frames"] --> X["g1_lowcmd.urdf.xacro<br/>body component"]
     L["lowcmd_params.yaml"] -- "xacro.load_yaml" --> X
     X --> RSP["robot_state_publisher"] -- "/robot_description" --> CM["ros2_control_node"]
 ```
@@ -17,17 +16,17 @@ flowchart LR
 
 | Path | Purpose |
 |---|---|
-| `urdf/g1_29dof_with_hand_rev_1_0.urdf` | Unitree's description from [unitree_ros](https://github.com/unitreerobotics/unitree_ros), byte for byte except mesh paths rewritten to `package://`. |
-| `urdf/g1_common.xacro` | Includes the vendored URDF, adds the sensor and grasp frames and both hand components. Loaded on its own by consumers that want the geometry without the body component. |
-| `urdf/g1_lowcmd.urdf.xacro` | Includes `g1_common.xacro` and adds the body component's `<ros2_control>` block. This is the entry point. |
+| `urdf/g1_29dof_with_hand_rev_1_0.urdf` | Plain URDF with the G1 body, fixed wrist mounts and complete left/right RH56E2 hand models. |
+| `urdf/RH56E2_L_2025_9_10.xacro`, `urdf/RH56E2_R_2025_9_11.xacro` | Source SolidWorks exports retained for provenance; their hand link/joint data is copied into the plain URDF. |
+| `urdf/g1_common.xacro` | Includes the plain host URDF and adds shared sensor frames. Loaded by geometry-only consumers. |
+| `urdf/g1_lowcmd.urdf.xacro` | Includes `g1_common.xacro` and adds the body's `<ros2_control>` block. This is the entry point. |
 | `config/lowcmd_params.yaml` | The body component's parameters and its per-joint position-only gains. |
-| `config/dex3_params.yaml` | The hand components' parameters, shared by both hands, and the per-finger limits. |
 | `config/cameras.yaml` | Where each camera mounts. The URDF builds the chest camera's frames from it and the simulator renders every camera from it, so a camera moves in this file alone. The head entry mirrors Unitree's `d435_joint`. |
 
-Visual meshes are not committed. CMake copies them at configure time from
+The G1 visual meshes are not committed. CMake copies them at configure time from
 `/opt/unitree_robotics/unitree_mujoco/unitree_robots/g1/meshes`, overridable with the
 `G1_VENDOR_MESHES` cache variable. If that directory is missing, the build warns and RViz shows no
-robot model.
+G1 body model.
 
 The YAML files are loaded with `xacro.load_yaml` and expanded into `<param>` tags, because
 `ros2_control` hardware plugins only receive parameters that way, never from `controller_manager`'s
@@ -35,31 +34,27 @@ own YAML.
 
 ## Components and frames
 
-The xacro emits three `<ros2_control>` blocks:
+The lowcmd xacro emits one `<ros2_control>` block:
 
 | Component | Plugin | Joints |
 |---|---|---|
 | `G1LowCmdSystem` | `g1_hardware_interface/G1LowCmdSystem` | All 29 body motors, legs and waist included, plus the `imu` sensor. |
-| `G1Dex3SystemLeft`, `G1Dex3SystemRight` | `g1_hand_interface/G1Dex3System` | Seven finger joints each. |
 
-It also adds frames to Unitree's URDF:
+The common wrapper adds sensor frames to the host URDF:
 
 | Frame | Parent | Purpose |
 |---|---|---|
 | `camera_depth_optical_frame`, `camera_color_optical_frame` | `d435_link` | REP 103 optical frames of the head camera. |
 | `chest_camera_link` and its two optical frames | `torso_link` | The chest camera, placed by `cameras.yaml`. |
 | `mid360_imu` | `mid360_link` | The Mid360's built-in IMU, FAST-LIO's body frame. |
-| `left_hand_grasp_frame`, `right_hand_grasp_frame` | `*_hand_palm_link` | Where the Dex3 closes. Pose goals target it rather than the palm origin. |
 | `d435_visual`, `chest_camera_visual`, `mid360_visual` | their sensor links | Bodies for RViz. Visual only, so they stay out of MoveIt's planning scene. |
 
 ## Parameters
 
 `config/lowcmd_params.yaml` sets the body component's parameters, described in
 [g1_hardware_interface](../g1_hardware_interface/README.md#parameters), and a
-`position_only_kp` and `position_only_kd` per joint. `config/dex3_params.yaml` sets the hand
-parameters, described in [g1_hand_interface](../g1_hand_interface/README.md#parameters), and each
-finger's `min` and `max`, copied from the URDF. The hands' `domain_id` and `network_interface` must
-equal the body component's.
+`position_only_kp` and `position_only_kd` per joint. The Dex5 models are description-only; this
+change does not add hand hardware control.
 
 ## Inspecting the model
 
@@ -79,28 +74,30 @@ own MJCF instead.
 
 | Test | Checks |
 |---|---|
-| `test_lowcmd_xacro` | Expands the xacro, validates it with `check_urdf`, and asserts the `<ros2_control>` blocks: all 29 body joints in SDK order, each with the five command interfaces and its `position_only_*` gains; the Dex3 wire order on each hand; and that both hands carry the body component's `domain_id` and `network_interface`. |
-| `test_motor_order` | `kG1JointNames` in `g1_hardware_interface` lists the 29 motors in SDK order and names only joints the vendored URDF has. |
+| `test_lowcmd_xacro` | Expands the xacro, validates it with `check_urdf`, and asserts the body component's 29 joints and command interfaces. |
+| `test_dex5_urdf` | Checks the plain host URDF's exact hand model data, mounts, tree, mimic relations, mesh URIs, and wrapper expansion. |
+| `test_motor_order` | `kG1JointNames` in `g1_hardware_interface` lists the 29 motors in SDK order and names only joints the host URDF has. |
 | `test_sensor_mounts` | The simulator's compile-time LiDAR mount (`kMountXyz`, `kMountRpy` in `sensor_publisher.cc`) matches the URDF's `mid360_joint`, and the head entry in `config/cameras.yaml` matches `d435_joint`. The simulator links no ROS, so it cannot ask TF where a sensor is. |
 | `xmllint_description_g1_description` | Every URDF and xacro is well-formed XML, which xacro does not enforce. |
 
 ## Dex5 (RH56E2) hands
 
-`urdf/RH56E2_L_2025_9_10.xacro` and `urdf/RH56E2_R_2025_9_11.xacro` are the SolidWorks exports
-(roots `left_dex5_base_link`, `right_dex5_base_link`), included by `g1_common.xacro` and mounted by
-fixed joints `left_dex5_mount_joint` / `right_dex5_mount_joint` on `left_wrist_yaw_link` /
-`right_wrist_yaw_link`. They replace the Unitree Dex3 chains, which are removed from the vendored
-URDF; the Dex3 ros2_control components are gone too. Active joints: `{side}_{thumb,index,middle,ring,little}_1_joint`
-and `{side}_thumb_2_joint`; the others are mimics.
+The complete bilateral RH56E2 link and joint descriptions, including inertials, visual and collision
+declarations, force-sensor and palm links, limits and mimic relations, are flattened into
+`urdf/g1_29dof_with_hand_rev_1_0.urdf`. Fixed joints `left_dex5_mount_joint` and
+`right_dex5_mount_joint` attach each hand root to its wrist yaw link.
 
-- **Mount pose is provisional (zeros), not a validated fit.** Override with xacro args
-  `dex5_left_mount_xyz`, `dex5_left_mount_rpy`, `dex5_right_mount_xyz`, `dex5_right_mount_rpy`.
-  The `*_hand_grasp_frame` links now sit at the Dex5 base origin, also provisional.
-- **Meshes are not in the repo.** Place the STLs, original names and case kept, in
-  `workspace/src/g1_description/meshes/dex5_left/` and `.../dex5_right/` (e.g. `base_link.STL`,
-  `left_thumb_1.STL`); they install to `share/g1_description/meshes/dex5_{left,right}/` and are
-  referenced as `package://g1_description/meshes/dex5_{left,right}/<name>.STL`. Nothing has been
-  verified visually until they are installed.
-- Description only: no hand hardware plugin, controllers, MoveIt or MuJoCo changes. Other packages
-  (e.g. `g1_moveit_config`, `g1_manipulation`, `g1_hand_interface`, `dex3_params.yaml`) still
-  reference the removed Dex3 names and need a follow-up.
+- **Wrist mount origins are provisional zero placeholders, not physically verified fit values.**
+  Measure and validate the actual hand-to-wrist transforms before using the model for motion or
+  collision planning. These transforms are fixed in the plain URDF, not xacro parameters.
+- **Meshes are not committed.** Place the original, case-sensitive STL files in
+  `workspace/src/g1_description/meshes/dex5_left/` and
+  `workspace/src/g1_description/meshes/dex5_right/`; for example, `base_link.STL` and
+  `left_thumb_1.STL` in the left-hand folder. They install to
+  `share/g1_description/meshes/dex5_{left,right}/` and are referenced through
+  `package://g1_description/meshes/dex5_{left,right}/<name>.STL`. RViz visual validation requires
+  those mesh files and has not been performed.
+- `*_hand_grasp_frame` names remain as compatibility frames at the source palm-link origins. Their
+  zero offsets are not calibrated grasp points. Any consumer still expecting Dex3 links, joints or
+  grasp geometry needs a separately scoped compatibility update.
+- Description only: no hand ros2_control, controller, MoveIt or MJCF changes are included.

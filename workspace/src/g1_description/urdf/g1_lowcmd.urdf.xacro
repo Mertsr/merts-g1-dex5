@@ -2,7 +2,7 @@
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="g1_29dof_with_hand_rev_1_0">
 
   <!-- All 29 body motors on G1LowCmdSystem over rt/lowcmd, with no onboard balance underneath.
-       Everything else, including both Dex5 hands (no hand ros2_control yet), comes from g1_common.xacro. -->
+       g1_common.xacro includes the host URDF and adds shared sensor frames. -->
   <xacro:include filename="g1_common.xacro"/>
 
   <xacro:property name="lowcmd" value="${xacro.load_yaml('../config/lowcmd_params.yaml')}"/>
