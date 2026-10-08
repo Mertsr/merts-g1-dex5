@@ -1,0 +1,156 @@
+# Velocity and acceleration limits MoveIt times its trajectories against.
+#
+# Not the URDF's 22 to 37 rad/s, which are motor limits. arm_trajectory_controller claims position
+# alone, so the arm runs on the component's position_only_kp (g1_description's
+# lowcmd_params.yaml) with no gravity compensation and falls behind a trajectory timed near the
+# motor limits; the JTC then aborts on its goal-time tolerance. 0.8 rad/s on every arm joint.
+#
+# The URDF declares no acceleration limits and time parameterization needs them: without, a plan
+# succeeds with zero timestamps and fails only at execution. 2.0 rad/s^2 is conservative because
+# arm acceleration shifts the centre of mass of a robot balancing itself.
+
+joint_limits:
+  left_shoulder_pitch_joint:
+    has_velocity_limits: true
+    max_velocity: 0.8
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+  left_shoulder_roll_joint:
+    has_velocity_limits: true
+    max_velocity: 0.8
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+  left_shoulder_yaw_joint:
+    has_velocity_limits: true
+    max_velocity: 0.8
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+  left_elbow_joint:
+    has_velocity_limits: true
+    max_velocity: 0.8
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+  left_wrist_roll_joint:
+    has_velocity_limits: true
+    max_velocity: 0.8
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+  left_wrist_pitch_joint:
+    has_velocity_limits: true
+    max_velocity: 0.8
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+  left_wrist_yaw_joint:
+    has_velocity_limits: true
+    max_velocity: 0.8
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+  right_shoulder_pitch_joint:
+    has_velocity_limits: true
+    max_velocity: 0.8
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+  right_shoulder_roll_joint:
+    has_velocity_limits: true
+    max_velocity: 0.8
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+  right_shoulder_yaw_joint:
+    has_velocity_limits: true
+    max_velocity: 0.8
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+  right_elbow_joint:
+    has_velocity_limits: true
+    max_velocity: 0.8
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+  right_wrist_roll_joint:
+    has_velocity_limits: true
+    max_velocity: 0.8
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+  right_wrist_pitch_joint:
+    has_velocity_limits: true
+    max_velocity: 0.8
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+  right_wrist_yaw_joint:
+    has_velocity_limits: true
+    max_velocity: 0.8
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+
+  # G1Dex3System slew-clamps every finger at 3.0 rad/s (g1_description's dex3_params.yaml); the
+  # drift test keeps these under it. Acceleration is higher than the arm's because a finger does
+  # not move the centre of mass.
+  left_hand_thumb_0_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 5.0
+  left_hand_thumb_1_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 5.0
+  left_hand_thumb_2_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 5.0
+  left_hand_middle_0_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 5.0
+  left_hand_middle_1_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 5.0
+  left_hand_index_0_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 5.0
+  left_hand_index_1_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 5.0
+  right_hand_thumb_0_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 5.0
+  right_hand_thumb_1_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 5.0
+  right_hand_thumb_2_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 5.0
+  right_hand_middle_0_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 5.0
+  right_hand_middle_1_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 5.0
+  right_hand_index_0_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 5.0
+  right_hand_index_1_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 5.0

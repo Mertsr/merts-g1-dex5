@@ -1,0 +1,59 @@
+# FAST-LIO2 against the simulator; the robot uses fastlio_mid360_hardware.yaml. Only the keys
+# marked DIFFERS may differ. The simulator models an IMU inside the Mid360 at mid360_imu, so the
+# extrinsic is the hardware one.
+/**:
+  ros__parameters:
+    feature_extract_enable: false
+    # DIFFERS (hardware: 3). The simulated sweep is already sparser: 11520 rays.
+    point_filter_num: 1
+    max_iteration: 3
+    # DIFFERS (hardware: 0.5). The voxel size bounds how tightly height is pinned to the floor;
+    # at 0.5 the height error exceeds the costmap's 0.08 m floor cut.
+    filter_size_surf: 0.2
+    filter_size_map: 0.2
+    cube_side_length: 1000.0
+    runtime_pos_log_enable: false
+    map_file_path: "./test.pcd"
+
+    common:
+      lid_topic: "/livox/custom_msg"
+      imu_topic: "/livox/imu"
+      time_sync_en: false
+      # g1_sensor_relay stamps clouds at capture time, so there is no lag to compensate.
+      time_offset_lidar_to_imu: 0.0
+
+    preprocess:
+      lidar_type: 1
+      scan_line: 4
+      blind: 0.5
+      timestamp_unit: 3
+      scan_rate: 10
+
+    mapping:
+      acc_cov: 0.1
+      gyr_cov: 0.1
+      b_acc_cov: 0.0001
+      b_gyr_cov: 0.0001
+      fov_degree: 360.0
+      det_range: 100.0
+      # DIFFERS (hardware: true). The simulated extrinsic is exact, and estimating it online
+      # lets the filter wander off it and diverge.
+      extrinsic_est_en: false
+      # As in the hardware config. Identity rotation: both sensors flip together with the
+      # mount, which lives in the URDF.
+      extrinsic_T: [-0.011, -0.02329, 0.04412]
+      extrinsic_R: [1.0, 0.0, 0.0,
+                    0.0, 1.0, 0.0,
+                    0.0, 0.0, 1.0]
+
+    publish:
+      path_en: false
+      effect_map_en: false
+      map_en: false
+      scan_publish_en: true
+      dense_publish_en: false
+      scan_bodyframe_pub_en: false
+
+    pcd_save:
+      pcd_save_en: false
+      interval: -1

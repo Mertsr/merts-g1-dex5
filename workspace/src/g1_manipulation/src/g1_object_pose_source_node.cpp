@@ -1,0 +1,280 @@
+/**
+ * @file g1_object_pose_source_node.cpp
+ * @brief Publishes /objects from the configured source, with no fallback between sources.
+ */
+
+#include "g1_manipulation/g1_object_pose_source_node.hpp"
+
+#include <algorithm>
+#include <cctype>
+#include <geometry_msgs/msg/transform_stamped.hpp>
+#include <memory>
+#include <string>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <utility>
+
+namespace g1_manipulation
+{
+
+namespace
+{
+
+// Best effort to match g1_sensor_relay: a reliable reader never matches a best-effort writer.
+rclcpp::QoS sourceQos()
+{
+    return rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
+}
+
+// Reliable, unlike the input: skills decide grasps from this, and a dropped message costs a pick.
+rclcpp::QoS outputQos()
+{
+    return rclcpp::QoS(rclcpp::KeepLast(1)).reliable().durability_volatile();
+}
+
+}  // namespace
+
+bool parseObjectSource(const std::string& name, ObjectSource& out)
+{
+    if (name == "sim_ground_truth")
+    {
+        out = ObjectSource::kSimGroundTruth;
+        return true;
+    }
+    if (name == "perception")
+    {
+        out = ObjectSource::kPerception;
+        return true;
+    }
+    if (name == "hardware")
+    {
+        out = ObjectSource::kHardware;
+        return true;
+    }
+    return false;
+}
+
+bool isBarePhraseAlias(const std::string& id, const vision_msgs::msg::Detection3DArray& objects)
+{
+    const std::string prefix = id + "_";
+    return std::any_of(
+        objects.detections.begin(),
+        objects.detections.end(),
+        [&prefix](const vision_msgs::msg::Detection3D& other) {
+            return other.id.size() > prefix.size() && other.id.starts_with(prefix) &&
+                   std::all_of(
+                       other.id.begin() + static_cast<std::ptrdiff_t>(prefix.size()),
+                       other.id.end(),
+                       [](unsigned char c) { return std::isdigit(c) != 0; });
+        });
+}
+
+G1ObjectPoseSource::G1ObjectPoseSource(const rclcpp::NodeOptions& options)
+  : rclcpp_lifecycle::LifecycleNode("g1_object_pose_source", options)
+{
+    declare_parameter<std::string>("object_source", "hardware");
+    declare_parameter<std::string>("source_frame_id", "odom");
+    declare_parameter<std::string>("output_frame_id", "odom");
+    declare_parameter<bool>("publish_markers", true);
+    declare_parameter<double>("transform_timeout_s", 0.5);
+}
+
+bool G1ObjectPoseSource::readParameters()
+{
+    const std::string source_name = get_parameter("object_source").as_string();
+    if (!parseObjectSource(source_name, source_))
+    {
+        RCLCPP_ERROR(
+            get_logger(),
+            "object_source='%s' is not a known source. Use 'sim_ground_truth', 'perception' or "
+            "'hardware'.",
+            source_name.c_str());
+        return false;
+    }
+
+    if (source_ == ObjectSource::kHardware)
+    {
+        // Verbose on purpose: silence would read as a broken topic, not a missing source.
+        RCLCPP_ERROR(
+            get_logger(),
+            "object_source='hardware' is not implemented: this robot has no detector of its "
+            "own. 'perception' runs g1_perception against whatever camera is publishing, in "
+            "simulation or on hardware, and is what a real measurement comes from. Refusing to "
+            "configure rather than let a grasp planner run on simulator ground truth it cannot "
+            "tell apart from a real measurement.");
+        return false;
+    }
+
+    source_frame_id_     = get_parameter("source_frame_id").as_string();
+    output_frame_id_     = get_parameter("output_frame_id").as_string();
+    publish_markers_     = get_parameter("publish_markers").as_bool();
+    transform_timeout_s_ = get_parameter("transform_timeout_s").as_double();
+    if (source_frame_id_.empty() || output_frame_id_.empty())
+    {
+        RCLCPP_ERROR(get_logger(), "source_frame_id and output_frame_id must be non-empty");
+        return false;
+    }
+    return true;
+}
+
+G1ObjectPoseSource::CallbackReturn G1ObjectPoseSource::on_configure(const rclcpp_lifecycle::State&)
+{
+    // Before anything is created, so a refused source leaves no publisher to wait on forever.
+    if (!readParameters())
+    {
+        return CallbackReturn::FAILURE;
+    }
+
+    tf_buffer_.emplace(get_clock());
+    tf_listener_.emplace(*tf_buffer_);
+
+    objects_pub_ = create_publisher<vision_msgs::msg::Detection3DArray>("~/objects", outputQos());
+    if (publish_markers_)
+    {
+        // Transient local, so an RViz started later still gets the last markers.
+        markers_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
+            "~/object_markers",
+            rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local());
+    }
+    source_sub_ = create_subscription<vision_msgs::msg::Detection3DArray>(
+        "~/object_poses",
+        sourceQos(),
+        [this](vision_msgs::msg::Detection3DArray::SharedPtr msg) {
+            onObjectPoses(std::move(msg));
+        });
+
+    RCLCPP_INFO(
+        get_logger(),
+        "Configured on %s: %s in '%s' -> %s in '%s'.",
+        source_ == ObjectSource::kPerception ?
+            "measured poses from g1_perception" :
+            "simulator ground truth, exact MuJoCo body poses rather than measurements",
+        source_sub_->get_topic_name(),
+        source_frame_id_.c_str(),
+        objects_pub_->get_topic_name(),
+        output_frame_id_.c_str());
+    return CallbackReturn::SUCCESS;
+}
+
+G1ObjectPoseSource::CallbackReturn G1ObjectPoseSource::on_cleanup(const rclcpp_lifecycle::State&)
+{
+    source_sub_.reset();
+    objects_pub_.reset();
+    markers_pub_.reset();
+    tf_listener_.reset();
+    tf_buffer_.reset();
+    return CallbackReturn::SUCCESS;
+}
+
+// Drawn from the message /objects carries, so RViz shows exactly what a skill acts on.
+void G1ObjectPoseSource::publishMarkers(const vision_msgs::msg::Detection3DArray& objects)
+{
+    auto markers = std::make_unique<visualization_msgs::msg::MarkerArray>();
+    // Rebuilt every message, so a vanished object must not leave its marker behind.
+    visualization_msgs::msg::Marker clear;
+    clear.action = visualization_msgs::msg::Marker::DELETEALL;
+    markers->markers.reserve(1 + 2 * objects.detections.size());
+    markers->markers.push_back(clear);
+
+    int id = 0;
+    for (const vision_msgs::msg::Detection3D& detection : objects.detections)
+    {
+        if (isBarePhraseAlias(detection.id, objects))
+        {
+            continue;
+        }
+        visualization_msgs::msg::Marker box;
+        box.header  = objects.header;
+        box.ns      = "objects";
+        box.id      = id++;
+        box.type    = visualization_msgs::msg::Marker::CUBE;
+        box.action  = visualization_msgs::msg::Marker::ADD;
+        box.pose    = detection.bbox.center;
+        box.scale   = detection.bbox.size;
+        box.color.r = 0.1F;
+        box.color.g = 0.8F;
+        box.color.b = 1.0F;
+        box.color.a = 0.6F;
+        markers->markers.push_back(box);
+
+        visualization_msgs::msg::Marker label = box;
+        label.id                              = id++;
+        label.ns                              = "object_labels";
+        label.type                            = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+        label.text                            = detection.id.empty() ? "object" : detection.id;
+        label.scale                           = geometry_msgs::msg::Vector3();
+        label.scale.z                         = 0.06;
+        label.pose.position.z += 0.5 * detection.bbox.size.z + 0.05;
+        label.color.a = 1.0F;
+        markers->markers.push_back(label);
+    }
+    markers_pub_->publish(std::move(markers));
+}
+
+// By value: the message is mutated in place, and rclcpp has no const-ref dispatch for that.
+// NOLINTNEXTLINE(performance-unnecessary-value-param)
+void G1ObjectPoseSource::onObjectPoses(vision_msgs::msg::Detection3DArray::SharedPtr msg)
+{
+    if (!objects_pub_->is_activated())
+    {
+        return;
+    }
+    // Only the configured frame: a sample stamped otherwise means the source is miswired.
+    if (msg->header.frame_id != source_frame_id_)
+    {
+        RCLCPP_WARN_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            5000,
+            "Dropping object poses stamped '%s'; this source is configured for '%s'.",
+            msg->header.frame_id.c_str(),
+            source_frame_id_.c_str());
+        return;
+    }
+
+    geometry_msgs::msg::TransformStamped source_to_output;
+    try
+    {
+        // At the capture stamp, not the latest: a newer transform moves the object by however
+        // far the robot walked since.
+        source_to_output = tf_buffer_->lookupTransform(
+            output_frame_id_,
+            msg->header.frame_id,
+            msg->header.stamp,
+            tf2::durationFromSec(transform_timeout_s_));
+    }
+    catch (const tf2::TransformException& ex)
+    {
+        RCLCPP_WARN_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            5000,
+            "Cannot place objects in '%s': %s",
+            output_frame_id_.c_str(),
+            ex.what());
+        return;
+    }
+
+    // Mutated and moved out: inter-process, so the callback owns the only reference. Composed
+    // with intra-process comms, this must become a copy.
+    vision_msgs::msg::Detection3DArray& out = *msg;
+    out.header.frame_id                     = output_frame_id_;
+    for (vision_msgs::msg::Detection3D& detection : out.detections)
+    {
+        detection.header.frame_id = output_frame_id_;
+        tf2::doTransform(detection.bbox.center, detection.bbox.center, source_to_output);
+        for (vision_msgs::msg::ObjectHypothesisWithPose& hypothesis : detection.results)
+        {
+            tf2::doTransform(hypothesis.pose.pose, hypothesis.pose.pose, source_to_output);
+        }
+    }
+
+    // The capture stamp is kept: consumers judge freshness, and a restamp would pass a stale pose
+    // as fresh.
+    if (markers_pub_ && markers_pub_->is_activated())
+    {
+        publishMarkers(out);
+    }
+    objects_pub_->publish(std::make_unique<vision_msgs::msg::Detection3DArray>(std::move(out)));
+}
+
+}  // namespace g1_manipulation

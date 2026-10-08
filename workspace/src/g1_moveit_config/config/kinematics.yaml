@@ -1,0 +1,39 @@
+# Inverse kinematics for the two arm chains.
+#
+# pick_ik, not KDL. With 7 joints against a 6-DoF pose the solver picks from a null space, and
+# KDL's pseudo-inverse wanders it, clamps at joint limits and flips the elbow between nearby
+# targets. Swapping back is one line:
+#   kinematics_solver: kdl_kinematics_plugin/KDLKinematicsPlugin
+#
+# both_arms has no entry on purpose; adding one breaks dual-arm IK. See g1.srdf.
+
+left_arm:
+  kinematics_solver: pick_ik/PickIkPlugin
+  kinematics_solver_timeout: 0.05
+
+  # global is a memetic search that solves from a far seed, which plan-to-pose needs, but it can
+  # answer successive Cartesian waypoints from different parts of the null space. local keeps a
+  # Cartesian path consistent and fails plan-to-pose, so it would have to be set per call.
+  mode: global
+
+  # Planning calls IK many times per motion, so solve time beats solution quality.
+  stop_optimization_on_valid_solution: true
+
+  # 1 mm and ~0.6 deg, tighter than the arm tracks, so the solver never limits accuracy.
+  position_threshold: 0.001
+  orientation_threshold: 0.01
+
+  # Zero leaves a Cartesian descent free to swing the elbow through the torso between waypoints,
+  # but 0.1 makes pregrasp IK fail, even with cost_threshold raised to 0.5.
+  minimal_displacement_weight: 0.0
+
+right_arm:
+  kinematics_solver: pick_ik/PickIkPlugin
+  kinematics_solver_timeout: 0.05
+  mode: global
+  stop_optimization_on_valid_solution: true
+  position_threshold: 0.001
+  orientation_threshold: 0.01
+
+  # Matches left_arm; see the note there.
+  minimal_displacement_weight: 0.0

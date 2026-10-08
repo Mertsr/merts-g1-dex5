@@ -1,0 +1,81 @@
+# How move_group hands a planned trajectory to controllers that already exist. MoveIt is one more
+# action client, not a second command path: JTC -> G1LowCmdSystem -> rt/lowcmd stays the only
+# writer.
+#
+# One controller for all 14 arm joints, so a both_arms plan executes as one trajectory rather
+# than two halves left to stay in step.
+
+moveit_controller_manager: moveit_simple_controller_manager/MoveItSimpleControllerManager
+
+# MoveIt must never activate or switch controllers. Acquiring the arm is a safety-critical switch
+# from arm_freeze_controller, done by g1_bringup's activate_arm; until then the JTC refuses to
+# execute, which is the intended failure.
+moveit_manage_controllers: false
+
+moveit_simple_controller_manager:
+  controller_names:
+    - arm_trajectory_controller
+    - left_hand_controller
+    - right_hand_controller
+
+  arm_trajectory_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: true
+    # Same list and order as g1_controllers/config/lowcmd_controllers.yaml; the drift test
+    # compares them. The JTC remaps by name, so the order is for readers.
+    joints:
+      - left_shoulder_pitch_joint
+      - left_shoulder_roll_joint
+      - left_shoulder_yaw_joint
+      - left_elbow_joint
+      - left_wrist_roll_joint
+      - left_wrist_pitch_joint
+      - left_wrist_yaw_joint
+      - right_shoulder_pitch_joint
+      - right_shoulder_roll_joint
+      - right_shoulder_yaw_joint
+      - right_elbow_joint
+      - right_wrist_roll_joint
+      - right_wrist_pitch_joint
+      - right_wrist_yaw_joint
+
+  # FollowJointTrajectory, not GripperCommand, which carries one scalar for a one-joint gripper;
+  # a Dex3 has seven independent joints. Not default: MoveIt picks these by joint coverage.
+  left_hand_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: false
+    joints:
+      - left_hand_thumb_0_joint
+      - left_hand_thumb_1_joint
+      - left_hand_thumb_2_joint
+      - left_hand_middle_0_joint
+      - left_hand_middle_1_joint
+      - left_hand_index_0_joint
+      - left_hand_index_1_joint
+
+  right_hand_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: false
+    joints:
+      - right_hand_thumb_0_joint
+      - right_hand_thumb_1_joint
+      - right_hand_thumb_2_joint
+      - right_hand_middle_0_joint
+      - right_hand_middle_1_joint
+      - right_hand_index_0_joint
+      - right_hand_index_1_joint
+
+trajectory_execution:
+  # The arm runs position-only with no gravity compensation, so its measured pose sits below the
+  # commanded one even at rest, which MoveIt's 0.01 default reads as being off the plan's start.
+  # Never 0: that disables the check rather than relaxing it.
+  allowed_start_tolerance: 0.05
+
+  execution_duration_monitoring: true
+  allowed_execution_duration_scaling: 2.0
+  # Matches the JTC's goal_time, so the two layers agree on how late is too late.
+  allowed_goal_duration_margin: 5.0
+  wait_for_trajectory_completion: true

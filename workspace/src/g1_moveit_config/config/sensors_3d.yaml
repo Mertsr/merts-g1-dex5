@@ -1,0 +1,44 @@
+# The 3D LiDAR into the planning scene, so move_group plans around what the robot can see.
+#
+# octomap_resolution sits at the top level because to_dict() flat-merges this file into
+# move_group's parameters, which read it at the node root. Unset, it falls back to 0.1 m.
+#
+# No octomap_frame: move_group builds the monitor in the planning frame, `pelvis`, and never reads
+# it. A walking pelvis drags the voxel grid with it; the fix is a virtual joint to odom in
+# g1.srdf, not a setting here.
+octomap_resolution: 0.025
+
+# A flat list of names, each a top-level block below. ROS 2 parameters cannot hold a list of
+# dicts, so the ROS 1-era perception tutorial does not carry over.
+sensors:
+  - mid360_cloud
+
+# PointCloudOctomapUpdater, not DepthImageOctomapUpdater: on MoveIt 2.5.9 the depth-image plugin's
+# initialize() runs before setParams(), so its padding, which is the self-filter, never applies.
+#
+# Every key is mandatory: setParams() skips the sensor with only an error log if one is missing.
+# Keep the decimal points: an int where a double is expected throws out of the monitor.
+mid360_cloud:
+  sensor_plugin: occupancy_map_monitor/PointCloudOctomapUpdater
+
+  # The LiDAR, not the depth camera: depth_image_proc's converter subscribes reliable and never
+  # receives the camera relay's best-effort images. This updater uses sensor-data QoS.
+  point_cloud_topic: /livox/lidar
+
+  # Past this a ray is carved as free space instead of marking an endpoint. The arms reach
+  # about 0.7 m, so this covers the workspace without mapping the far wall.
+  max_range: 2.5
+
+  # Every other point, halving the cost of each update.
+  point_subsample: 2
+
+  # Self-filter padding on the robot's own collision geometry. Generous on the scale because the
+  # meshes become convex hulls, so nothing between the fingers is ever mapped regardless.
+  padding_offset: 0.02
+  padding_scale: 1.2
+
+  # The planner does not need a 30 Hz map, and every update walks the shape mask.
+  max_update_rate: 5.0
+
+  # The self-filtered cloud, to see what the filter removed.
+  filtered_cloud_topic: filtered_cloud

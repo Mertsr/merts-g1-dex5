@@ -1,0 +1,42 @@
+# OMPL pipeline, hand-written: only the planner this config uses.
+
+planning_plugins:
+  - ompl_interface/OMPLPlanner
+
+request_adapters:
+  - default_planning_request_adapters/ResolveConstraintFrames
+  - default_planning_request_adapters/ValidateWorkspaceBounds
+  - default_planning_request_adapters/CheckStartStateBounds
+  - default_planning_request_adapters/CheckStartStateCollision
+
+response_adapters:
+  - default_planning_response_adapters/AddTimeOptimalParameterization
+  - default_planning_response_adapters/ValidateSolution
+  - default_planning_response_adapters/DisplayMotionPath
+
+# No start_state_max_bounds_error: CheckStartStateBounds reads no parameter and aborts on any
+# excursion, and no adapter clamps one. g1_manipulation brings the start state into bounds itself.
+
+planner_configs:
+  RRTConnect:
+    type: geometric::RRTConnect
+    range: 0.0   # 0 lets OMPL pick from the state space extent
+
+left_arm:
+  planner_configs:
+    - RRTConnect
+  # Tighter than the 0.01 default: motion is validated by sampling along each segment, and the
+  # things these arms reach around are thin enough to pass between two validated states.
+  longest_valid_segment_fraction: 0.005
+
+right_arm:
+  planner_configs:
+    - RRTConnect
+  longest_valid_segment_fraction: 0.005
+
+both_arms:
+  planner_configs:
+    - RRTConnect
+  longest_valid_segment_fraction: 0.005
+  # One joint from each arm. RRTConnect ignores it, but OMPL warns and picks its own without one.
+  projection_evaluator: joints(left_shoulder_pitch_joint,right_shoulder_pitch_joint)

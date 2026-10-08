@@ -1,0 +1,117 @@
+<?xml version="1.0"?>
+<!--
+  Navigate to the workbench, pick the block off it, carry it to the storage room and put it in
+  the bench there. Coordinates are the g1_navigation_scene facility, in `map`.
+
+  The two stations are staging poses, not working poses: Nav2's goal tolerance is 0.5 m, wider than
+  the band the arm reaches from. ApproachObject closes the rest against the measured object,
+  holding the station's working yaw.
+
+  The arm bracket spans pick through place because a released Dex3 goes limp and drops what it
+  holds. The executor releases the arm on the way out, whatever happens here.
+-->
+<root BTCPP_format="4" main_tree_to_execute="PickAndPlace">
+  <BehaviorTree ID="PickAndPlace">
+    <Sequence name="mission">
+      <!-- Taken here rather than assumed from bring-up; acquiring an acquired arm is a no-op. -->
+      <AcquireArm name="take_the_arm"/>
+
+      <!-- Arm pose disturbs the gait, and tucked sweeps the least. -->
+      <SubTree ID="TuckBothArms" name="tuck_to_travel"/>
+
+      <!-- The detector is needed only at the benches, and it shares the GPU with the simulator. -->
+      <StopLooking name="perception_off_for_the_walk"/>
+
+      <RetryUntilSuccessful name="stage_at_workbench_with_retries" num_attempts="3">
+        <Sequence name="clear_then_stage_at_workbench">
+          <ClearCostmaps name="forget_before_staging"/>
+          <NavigateToPose name="stage_at_workbench" goal="4.30;-5.60;1.5708"
+                          goal_yaw="{workbench_yaw}"/>
+        </Sequence>
+      </RetryUntilSuccessful>
+
+      <!-- Asked only once the block is in view. The long wording widens its score margin over
+           the runner-up; /objects still calls it red_block. -->
+      <RetryUntilSuccessful name="find_the_block_with_retries" num_attempts="2">
+        <LookFor name="find_the_block" objects="red_block=bright red plastic ball"/>
+      </RetryUntilSuccessful>
+
+      <!-- Stopping short is recoverable by running it again; overshooting is not, the gait has
+           no reverse. -->
+      <RetryUntilSuccessful name="approach_with_one_retry" num_attempts="2">
+        <ApproachObject name="close_on_the_block" object_id="red_block" arm="right"
+                        working_yaw="{workbench_yaw}"/>
+      </RetryUntilSuccessful>
+
+      <!-- A failed pick leaves the hand open and nothing attached, and the retry re-reads the
+           block's pose. -->
+      <RetryUntilSuccessful name="pick_with_one_retry" num_attempts="2">
+        <Pick name="pick_the_block" object_id="red_block" arm="right"/>
+      </RetryUntilSuccessful>
+
+      <!-- Left on, it tracks the ball in the hand and splits it into several tracks. -->
+      <StopLooking name="perception_off_for_the_carry"/>
+
+      <!-- Straight back rather than turning, which would sweep the ball across the desk. 1.2 m
+           starts the navigation outside the desk's inflated footprint even when the approach
+           ended at an angle. -->
+      <Retreat name="back_off_the_desk" distance="1.2"/>
+
+      <!-- The costmaps still hold the arm, the ball and the desk from the reach. -->
+      <ClearCostmaps name="forget_the_workbench"/>
+
+      <!-- No carry posture: the arm stays where the lift left it, since every arm move with the
+           ball in hand is a chance to drop it. -->
+
+      <!-- 5.70 is empirical: the static map predates the storage bench, and Nav2 refuses to plan
+           to 5.60. Rebuild the map before moving it. -->
+      <RetryUntilSuccessful name="stage_at_storage_with_retries" num_attempts="3">
+        <Sequence name="clear_then_stage_at_storage">
+          <ClearCostmaps name="forget_before_storage"/>
+          <NavigateToPose name="stage_at_storage" goal="6.30;5.70;1.5708"
+                          goal_yaw="{storage_yaw}"/>
+        </Sequence>
+      </RetryUntilSuccessful>
+
+      <!-- The ball is asked for too, unwaited, so Place can confirm where it lands. -->
+      <RetryUntilSuccessful name="find_the_bench_with_retries" num_attempts="2">
+        <LookFor name="find_the_bench" objects="brown_box=brown box container"
+                 also="red_block=bright red plastic ball"/>
+      </RetryUntilSuccessful>
+
+      <!-- Approach and place retry together: reaching with a load moves the base, and past about
+           0.1 m only a new approach brings the target back into reach. -->
+      <RetryUntilSuccessful name="place_with_retries" num_attempts="3">
+        <Sequence name="close_in_and_place">
+          <ApproachObject name="close_on_the_bench" object_id="brown_box" arm="right"
+                          working_yaw="{storage_yaw}"/>
+          <!-- Named, not a map coordinate, so the place reads the same /objects stream as the
+               approach. -->
+          <Place name="put_it_in_the_bench" surface="brown_box" arm="right"/>
+        </Sequence>
+      </RetryUntilSuccessful>
+
+      <Retreat name="back_off_the_bench" distance="0.8"/>
+      <ClearCostmaps name="forget_the_bench"/>
+
+      <SubTree ID="TuckBothArms" name="tuck_before_handing_back"/>
+
+      <ReleaseArm name="hand_the_arm_back"/>
+      <StopLooking name="perception_off"/>
+    </Sequence>
+  </BehaviorTree>
+
+  <!-- One leaf per arm: both_arms cannot execute a named posture on this stack. The left arm
+       too, because a hanging hand jams under the workbench slab. Retried because OMPL sometimes
+       samples a path that clips the live octomap. -->
+  <BehaviorTree ID="TuckBothArms">
+    <Sequence name="tuck_both">
+      <RetryUntilSuccessful name="tuck_right_with_retries" num_attempts="3">
+        <SetArmPosture name="tuck_right" group="right_arm" named_target="tucked"/>
+      </RetryUntilSuccessful>
+      <RetryUntilSuccessful name="tuck_left_with_retries" num_attempts="3">
+        <SetArmPosture name="tuck_left" group="left_arm" named_target="tucked"/>
+      </RetryUntilSuccessful>
+    </Sequence>
+  </BehaviorTree>
+</root>

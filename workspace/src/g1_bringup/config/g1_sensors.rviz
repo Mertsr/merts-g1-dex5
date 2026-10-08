@@ -1,0 +1,179 @@
+# RViz without navigation:
+#   ros2 launch g1_bringup bringup.launch.py sensors:=true rviz:=true
+#
+# The Sensors group must match g1_navigation/config/g1_navigation.rviz's apart from its Enabled
+# flag; g1_navigation's test_rviz_configs checks it.
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Sensors1
+        - /Sensors1/LiDAR1
+        - /Sensors1/Depth cloud1
+      Splitter Ratio: 0.5
+    Tree Height: 700
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Name: root
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 20
+      Color: 160; 160; 164
+      Alpha: 0.3
+      Reference Frame: <Fixed Frame>
+
+    - Class: rviz_default_plugins/RobotModel
+      Name: Robot
+      Enabled: true
+      Description Topic:
+        Value: /robot_description
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Alpha: 0.8
+
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: false
+      Show Names: true
+      Show Axes: true
+      Show Arrows: false
+      Marker Scale: 0.3
+
+    - Class: rviz_default_plugins/Odometry
+      Name: Odometry
+      Enabled: true
+      Topic:
+        Value: /g1_odometry_publisher/odom
+        Depth: 100
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+      Keep: 100
+      Position Tolerance: 0.1
+      Angle Tolerance: 0.1
+      Shape:
+        Value: Arrow
+        Alpha: 1
+        Color: 255; 85; 0
+        Shaft Length: 0.3
+        Shaft Radius: 0.03
+        Head Length: 0.1
+        Head Radius: 0.06
+
+    # BEGIN SENSOR GROUP: must match g1_navigation/config/g1_navigation.rviz
+    - Class: rviz_common/Group
+      Name: Sensors
+      Enabled: true
+      Displays:
+        # Best-effort to match g1_sensor_relay: a Reliable subscription receives nothing.
+        - Class: rviz_default_plugins/PointCloud2
+          Name: LiDAR
+          Enabled: true
+          Topic:
+            Value: /livox/lidar
+            Depth: 5
+            Durability Policy: Volatile
+            Reliability Policy: Best Effort
+          Style: Points
+          Size (Pixels): 2
+          Alpha: 1
+          Decay Time: 0
+          Position Transformer: XYZ
+          Color Transformer: AxisColor
+          Axis: Z
+          Autocompute Intensity Bounds: true
+          Invert Rainbow: false
+
+        # Should overlap the LiDAR returns; if it floats away, the camera mount or depth scale
+        # is wrong.
+        - Class: rviz_default_plugins/DepthCloud
+          Name: Depth cloud
+          Enabled: true
+          Topic Filter: false
+          Depth Map Topic: /camera/aligned_depth_to_color/image_raw
+          Depth Map Transport Hint: raw
+          Color Transport Hint: raw
+          Queue Size: 5
+          Style: Points
+          Size (Pixels): 3
+          Alpha: 1
+          Decay Time: 0
+          Color Image Topic: /camera/color/image_raw
+          Color Transformer: RGB8
+          Occlusion Compensation:
+            Occlusion Time-Out: 30
+            Enabled: false
+
+        - Class: rviz_default_plugins/Image
+          Name: Depth image
+          Enabled: true
+          Topic:
+            Value: /camera/aligned_depth_to_color/image_raw
+            Depth: 5
+            Durability Policy: Volatile
+            Reliability Policy: Best Effort
+          Max Value: 4
+          Min Value: 0.5
+          Median window: 5
+          Normalize Range: false
+
+        # Colour from the same render as the depth above, so the two line up pixel for pixel.
+        - Class: rviz_default_plugins/Image
+          Name: Colour image
+          Enabled: true
+          Topic:
+            Value: /camera/color/image_raw
+            Depth: 5
+            Durability Policy: Volatile
+            Reliability Policy: Best Effort
+          Normalize Range: true
+
+        # The simulator's ground truth for the sweep origin; it should sit exactly on the Mid360.
+        - Class: rviz_default_plugins/Pose
+          Name: Sensor pose
+          Enabled: false
+          Topic:
+            Value: /g1_sensor_relay/sensor_pose
+            Depth: 5
+            Durability Policy: Volatile
+            Reliability Policy: Best Effort
+          Shape: Axes
+          Axes Length: 0.3
+          Axes Radius: 0.02
+    # END SENSOR GROUP
+
+  Global Options:
+    # odom, since map exists only under SLAM or AMCL.
+    Fixed Frame: odom
+    Background Color: 48; 48; 48
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Distance: 12
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0.8
+      Pitch: 0.6
+      Yaw: 2.4
+      Target Frame: <Fixed Frame>
+      Near Clip Distance: 0.01
+Window Geometry:
+  Height: 900
+  Width: 1400
+  Displays:
+    collapsed: false
+  Views:
+    collapsed: false

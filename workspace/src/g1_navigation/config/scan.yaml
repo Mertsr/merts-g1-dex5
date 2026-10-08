@@ -1,0 +1,35 @@
+# /livox/lidar (PointCloud2) -> /scan (LaserScan) for slam_toolbox and AMCL. The costmaps read
+# the PointCloud2 directly: the band below drops everything under 0.30 m, where low obstacles are.
+pointcloud_to_laserscan:
+  ros__parameters:
+    use_sim_time: false
+
+    # Gravity-aligned, so the height band is absolute above the floor; a pelvis-relative band
+    # would tilt and bob with the gait.
+    target_frame: "base_footprint"
+
+    # Wide enough for the sensor's ~1.9-degree elevation rings to fill every azimuth bin at
+    # range; a thin band leaves gaps.
+    min_height: 0.30
+    max_height: 1.50
+
+    # Full circle at the sweep's 1-degree azimuth resolution; finer bins would stay empty.
+    angle_min: -3.141592653589793
+    angle_max: 3.141592653589793
+    angle_increment: 0.017453292519943295
+
+    # The Mid360's spec minimum. The simulated sweep never sees the robot's own links; the real
+    # sensor will.
+    range_min: 0.1
+    # Spans the 18 x 18 m facility corner to corner. Shorter trims spoke artifacts in free space
+    # but risks losing the far walls.
+    range_max: 25.0
+
+    scan_time: 0.1
+
+    # A miss as +inf: slam_toolbox reads range_max as a hit and would map phantom walls there.
+    use_inf: true
+
+    # The newest 50 Hz transform can trail a cloud by 20 ms; tighter drops scans.
+    transform_tolerance: 0.1
+    queue_size: 5

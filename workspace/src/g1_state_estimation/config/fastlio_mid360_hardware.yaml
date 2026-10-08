@@ -1,0 +1,56 @@
+# FAST-LIO2 on the G1's Mid360, hardware. fastlio_mid360_sim.yaml differs only where it says
+# DIFFERS. Derived from deepglint/FAST_LIO_LOCALIZATION_HUMANOID's mid360.yaml (humble); its
+# open3d_loc relocalization is unused because AMCL owns map -> odom.
+/**:
+  ros__parameters:
+    feature_extract_enable: false
+    # Every third of the Mid360's ~20k points per scan; upstream's value for this sensor.
+    point_filter_num: 3
+    max_iteration: 3
+    filter_size_surf: 0.5
+    filter_size_map: 0.5
+    cube_side_length: 1000.0
+    runtime_pos_log_enable: false
+    map_file_path: "./test.pcd"
+
+    common:
+      # CustomMsg, for the per-point timestamps motion undistortion needs.
+      lid_topic: "/livox/custom_msg"
+      # The Mid360's own IMU: one clock with the points, and rigid with the laser.
+      imu_topic: "/livox/imu"
+      time_sync_en: false
+      time_offset_lidar_to_imu: 0.0
+
+    preprocess:
+      lidar_type: 1 # Livox serials
+      scan_line: 4
+      blind: 0.5
+      timestamp_unit: 3
+      scan_rate: 10
+
+    mapping:
+      acc_cov: 0.1
+      gyr_cov: 0.1
+      b_acc_cov: 0.0001
+      b_gyr_cov: 0.0001
+      fov_degree: 360.0
+      det_range: 100.0
+      extrinsic_est_en: true
+      # Livox's lidar-in-IMU pose. The upside-down mount flips both together, so it lives in
+      # the URDF (mid360_joint), not here.
+      extrinsic_T: [-0.011, -0.02329, 0.04412]
+      extrinsic_R: [1., 0., 0., 0., 1., 0., 0., 0., 1.]
+
+    publish:
+      path_en: false
+      effect_map_en: false
+      map_en: false
+      # The registered scan, for RViz. Path and map grow without bound and nothing reads them.
+      scan_publish_en: true
+      dense_publish_en: false
+      scan_bodyframe_pub_en: false
+
+    pcd_save:
+      # Off, unlike upstream: with interval -1 every frame accumulates in memory until shutdown.
+      pcd_save_en: false
+      interval: -1
