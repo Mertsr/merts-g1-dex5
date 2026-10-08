@@ -1,12 +1,11 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="g1_29dof_with_hand_rev_1_0">
 
-  <!-- The robot without the body's ros2_control block: the vendored body, the frames the stack
-       looks up by name, and both hands. Geometry-only consumers (RViz, the sensor-extrinsic
-       test) load this file so they cannot claim the body motors. -->
+  <!-- The plain host URDF contains the G1 body and both Dex5 hands. This file adds shared sensor
+       frames without the body's ros2_control block. Geometry-only consumers (RViz, the
+       sensor-extrinsic test) load it so they cannot claim the body motors. -->
 
-  <!-- Unitree's URDF, byte-for-byte (CRLF included) apart from mesh paths rewritten to
-       package:// for RViz. Additions go in this file, so it stays diffable against upstream. -->
+  <!-- Includes the plain host URDF, which contains the G1 body and bilateral Dex5 hand models. -->
   <xacro:include filename="g1_29dof_with_hand_rev_1_0.urdf"/>
 
   <!-- REP 103 optical frames (z forward, x right, y down), which ROS depth consumers assume.
@@ -109,73 +108,5 @@
     <child link="mid360_imu"/>
     <origin xyz="0.011 0.02329 -0.04412" rpy="0 0 0"/>
   </joint>
-
-  <xacro:property name="dex3_params" value="${xacro.load_yaml('../config/dex3_params.yaml')}"/>
-
-  <xacro:macro name="g1_hand_joint" params="name">
-    <joint name="${name}">
-      <command_interface name="position"/>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/>
-      <state_interface name="effort"/>
-      <param name="min">${dex3_params.joints[name].min}</param>
-      <param name="max">${dex3_params.joints[name].max}</param>
-    </joint>
-  </xacro:macro>
-
-  <!-- One component per hand, so a fault on one hand takes down neither the arms nor the other
-       hand.
-
-       domain_id and network_interface must match the body component's: ChannelFactory is per
-       process, only its first Init applies, and a mismatch silently strands the later one.
-
-       Joint order is the Dex3 wire order, since HandCmd_::motor_cmd is positional; G1Dex3System
-       refuses to init if it is disturbed. -->
-  <xacro:macro name="g1_dex3_hand" params="side">
-    <ros2_control name="G1Dex3System${'Left' if side == 'left' else 'Right'}" type="system">
-      <hardware>
-        <plugin>g1_hand_interface/G1Dex3System</plugin>
-        <param name="side">${side}</param>
-        <param name="domain_id">${dex3_params.system.domain_id}</param>
-        <param name="network_interface">${dex3_params.system.network_interface}</param>
-        <param name="kp">${dex3_params.system.kp}</param>
-        <param name="kd">${dex3_params.system.kd}</param>
-        <param name="command_publish_rate">${dex3_params.system.command_publish_rate}</param>
-        <param name="max_joint_velocity_rad_s">${dex3_params.system.max_joint_velocity_rad_s}</param>
-        <param name="state_timeout_ms">${dex3_params.system.state_timeout_ms}</param>
-        <param name="state_topic">${dex3_params.system.state_topic_prefix}${side}${dex3_params.system.state_topic_suffix}</param>
-      </hardware>
-
-      <xacro:g1_hand_joint name="${side}_hand_thumb_0_joint"/>
-      <xacro:g1_hand_joint name="${side}_hand_thumb_1_joint"/>
-      <xacro:g1_hand_joint name="${side}_hand_thumb_2_joint"/>
-      <xacro:g1_hand_joint name="${side}_hand_middle_0_joint"/>
-      <xacro:g1_hand_joint name="${side}_hand_middle_1_joint"/>
-      <xacro:g1_hand_joint name="${side}_hand_index_0_joint"/>
-      <xacro:g1_hand_joint name="${side}_hand_index_1_joint"/>
-    </ros2_control>
-  </xacro:macro>
-
-  <xacro:g1_dex3_hand side="left"/>
-  <xacro:g1_dex3_hand side="right"/>
-
-  <!-- The point the Dex3 closes on. Pose goals target it rather than the palm origin, which
-       would put the object through the fingers. Orientation is the palm's; y mirrors.
-       x = 0.090: past the retracted thumb's surface (x 0.046 at pinch_ready), within the closed
-       thumb's reach (x 0.091).
-       y = 0.050: where fingers and thumb meet; the hand hangs 63 mm below it, which
-       g1_manipulation's min_grip_height_m allows for. -->
-
-  <xacro:macro name="g1_grasp_frame" params="side mirror">
-    <link name="${side}_hand_grasp_frame"/>
-    <joint name="${side}_hand_grasp_frame_joint" type="fixed">
-      <parent link="${side}_hand_palm_link"/>
-      <child link="${side}_hand_grasp_frame"/>
-      <origin xyz="0.090 ${mirror * 0.050} 0" rpy="0 0 0"/>
-    </joint>
-  </xacro:macro>
-
-  <xacro:g1_grasp_frame side="left" mirror="-1"/>
-  <xacro:g1_grasp_frame side="right" mirror="1"/>
 
 </robot>

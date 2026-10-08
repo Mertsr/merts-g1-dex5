@@ -25,7 +25,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/base_link.STL" />
+          filename="package://g1_description/meshes/dex5_left/base_link.STL" />
       </geometry>
       <material
         name="">
@@ -39,7 +39,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/base_link.STL" />
+          filename="package://g1_description/meshes/dex5_left/base_link.STL" />
       </geometry>
     </collision>
   </link>
@@ -65,7 +65,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_thumb_1.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_thumb_1.STL" />
       </geometry>
       <material
         name="">
@@ -79,7 +79,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_thumb_1.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_thumb_1.STL" />
       </geometry>
     </collision>
   </link>
@@ -123,7 +123,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_thumb_2.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_thumb_2.STL" />
       </geometry>
       <material
         name="">
@@ -137,7 +137,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_thumb_2.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_thumb_2.STL" />
       </geometry>
     </collision>
   </link>
@@ -181,7 +181,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_thumb_3.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_thumb_3.STL" />
       </geometry>
       <material
         name="">
@@ -195,7 +195,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_thumb_3.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_thumb_3.STL" />
       </geometry>
     </collision>
   </link>
@@ -243,7 +243,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_thumb_force_sensor_2.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_thumb_force_sensor_2.STL" />
       </geometry>
       <material
         name="">
@@ -257,7 +257,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_thumb_force_sensor_2.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_thumb_force_sensor_2.STL" />
       </geometry>
     </collision>
   </link>
@@ -296,7 +296,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_thumb_4.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_thumb_4.STL" />
       </geometry>
       <material
         name="">
@@ -310,7 +310,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_thumb_4.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_thumb_4.STL" />
       </geometry>
     </collision>
   </link>
@@ -358,7 +358,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_thumb_force_sensor_3.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_thumb_force_sensor_3.STL" />
       </geometry>
       <material
         name="">
@@ -372,7 +372,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_thumb_force_sensor_3.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_thumb_force_sensor_3.STL" />
       </geometry>
     </collision>
   </link>
@@ -411,7 +411,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_thumb_force_sensor_4.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_thumb_force_sensor_4.STL" />
       </geometry>
       <material
         name="">
@@ -425,7 +425,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_thumb_force_sensor_4.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_thumb_force_sensor_4.STL" />
       </geometry>
     </collision>
   </link>
@@ -464,7 +464,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_thumb_force_sensor_1.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_thumb_force_sensor_1.STL" />
       </geometry>
       <material
         name="">
@@ -478,7 +478,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_thumb_force_sensor_1.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_thumb_force_sensor_1.STL" />
       </geometry>
     </collision>
   </link>
@@ -517,7 +517,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_index_1.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_index_1.STL" />
       </geometry>
       <material
         name="">
@@ -531,7 +531,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_index_1.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_index_1.STL" />
       </geometry>
     </collision>
   </link>
@@ -575,7 +575,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_index_2.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_index_2.STL" />
       </geometry>
       <material
         name="">
@@ -589,7 +589,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_index_2.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_index_2.STL" />
       </geometry>
     </collision>
   </link>
@@ -637,7 +637,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_index_force_sensor_2.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_index_force_sensor_2.STL" />
       </geometry>
       <material
         name="">
@@ -651,7 +651,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_index_force_sensor_2.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_index_force_sensor_2.STL" />
       </geometry>
     </collision>
   </link>
@@ -690,7 +690,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_index_force_sensor_3.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_index_force_sensor_3.STL" />
       </geometry>
       <material
         name="">
@@ -704,7 +704,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_index_force_sensor_3.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_index_force_sensor_3.STL" />
       </geometry>
     </collision>
   </link>
@@ -743,7 +743,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_index_force_sensor_1.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_index_force_sensor_1.STL" />
       </geometry>
       <material
         name="">
@@ -757,7 +757,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_index_force_sensor_1.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_index_force_sensor_1.STL" />
       </geometry>
     </collision>
   </link>
@@ -796,7 +796,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_middle_1.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_middle_1.STL" />
       </geometry>
       <material
         name="">
@@ -810,7 +810,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_middle_1.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_middle_1.STL" />
       </geometry>
     </collision>
   </link>
@@ -854,7 +854,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_middle_2.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_middle_2.STL" />
       </geometry>
       <material
         name="">
@@ -868,7 +868,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_middle_2.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_middle_2.STL" />
       </geometry>
     </collision>
   </link>
@@ -916,7 +916,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_middle_force_sensor_2.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_middle_force_sensor_2.STL" />
       </geometry>
       <material
         name="">
@@ -930,7 +930,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_middle_force_sensor_2.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_middle_force_sensor_2.STL" />
       </geometry>
     </collision>
   </link>
@@ -969,7 +969,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_middle_force_sensor_3.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_middle_force_sensor_3.STL" />
       </geometry>
       <material
         name="">
@@ -983,7 +983,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_middle_force_sensor_3.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_middle_force_sensor_3.STL" />
       </geometry>
     </collision>
   </link>
@@ -1022,7 +1022,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_middle_force_sensor_1.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_middle_force_sensor_1.STL" />
       </geometry>
       <material
         name="">
@@ -1036,7 +1036,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_middle_force_sensor_1.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_middle_force_sensor_1.STL" />
       </geometry>
     </collision>
   </link>
@@ -1075,7 +1075,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_ring_1.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_ring_1.STL" />
       </geometry>
       <material
         name="">
@@ -1089,7 +1089,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_ring_1.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_ring_1.STL" />
       </geometry>
     </collision>
   </link>
@@ -1133,7 +1133,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_ring_2.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_ring_2.STL" />
       </geometry>
       <material
         name="">
@@ -1147,7 +1147,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_ring_2.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_ring_2.STL" />
       </geometry>
     </collision>
   </link>
@@ -1195,7 +1195,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_ring_force_sensor_2.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_ring_force_sensor_2.STL" />
       </geometry>
       <material
         name="">
@@ -1209,7 +1209,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_ring_force_sensor_2.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_ring_force_sensor_2.STL" />
       </geometry>
     </collision>
   </link>
@@ -1248,7 +1248,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_ring_force_sensor_3.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_ring_force_sensor_3.STL" />
       </geometry>
       <material
         name="">
@@ -1262,7 +1262,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_ring_force_sensor_3.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_ring_force_sensor_3.STL" />
       </geometry>
     </collision>
   </link>
@@ -1301,7 +1301,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_ring_force_sensor_1.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_ring_force_sensor_1.STL" />
       </geometry>
       <material
         name="">
@@ -1315,7 +1315,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_ring_force_sensor_1.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_ring_force_sensor_1.STL" />
       </geometry>
     </collision>
   </link>
@@ -1354,7 +1354,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_little_1.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_little_1.STL" />
       </geometry>
       <material
         name="">
@@ -1368,7 +1368,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_little_1.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_little_1.STL" />
       </geometry>
     </collision>
   </link>
@@ -1412,7 +1412,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_little_2.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_little_2.STL" />
       </geometry>
       <material
         name="">
@@ -1426,7 +1426,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_little_2.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_little_2.STL" />
       </geometry>
     </collision>
   </link>
@@ -1474,7 +1474,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_little_force_sensor_2.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_little_force_sensor_2.STL" />
       </geometry>
       <material
         name="">
@@ -1488,7 +1488,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_little_force_sensor_2.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_little_force_sensor_2.STL" />
       </geometry>
     </collision>
   </link>
@@ -1527,7 +1527,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_little_force_sensor_3.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_little_force_sensor_3.STL" />
       </geometry>
       <material
         name="">
@@ -1541,7 +1541,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_little_force_sensor_3.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_little_force_sensor_3.STL" />
       </geometry>
     </collision>
   </link>
@@ -1580,7 +1580,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_little_force_sensor_1.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_little_force_sensor_1.STL" />
       </geometry>
       <material
         name="">
@@ -1594,7 +1594,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_little_force_sensor_1.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_little_force_sensor_1.STL" />
       </geometry>
     </collision>
   </link>
@@ -1633,7 +1633,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_plam_1.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_plam_1.STL" />
       </geometry>
       <material
         name="">
@@ -1647,7 +1647,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_plam_1.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_plam_1.STL" />
       </geometry>
     </collision>
   </link>
@@ -1686,7 +1686,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_plam_2.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_plam_2.STL" />
       </geometry>
       <material
         name="">
@@ -1700,7 +1700,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_plam_2.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_plam_2.STL" />
       </geometry>
     </collision>
   </link>
@@ -1739,7 +1739,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_plam_force_sensor.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_plam_force_sensor.STL" />
       </geometry>
       <material
         name="">
@@ -1753,7 +1753,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://RH56E2_L_2025_9_10/meshes/left_plam_force_sensor.STL" />
+          filename="package://g1_description/meshes/dex5_left/left_plam_force_sensor.STL" />
       </geometry>
     </collision>
   </link>

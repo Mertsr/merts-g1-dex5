@@ -1,4 +1,4 @@
-# Validates the whole-body xacro: the body component, the hands, and their wire order.
+# Validates the whole-body xacro: the body component and its wire order.
 import os
 import subprocess
 import tempfile
@@ -81,37 +81,8 @@ def test_every_body_joint_exports_kp_and_kd(expanded_urdf_path):
         assert {"position_only_kp", "position_only_kd"} <= params, joint.get("name")
 
 
-@pytest.mark.parametrize("side", ["left", "right"])
-def test_each_hand_is_its_own_component_in_wire_order(expanded_urdf_path, side):
-    # Its own component, not joints on the body's. Order matters: HandCmd.motor_cmd is
-    # positional, so a reordered list would close the wrong fingers.
+def test_no_hand_ros2_control_component(expanded_urdf_path):
+    # The Dex5 hands are description-only for now; the old Dex3 components are gone with their
+    # joints.
     root = ET.parse(expanded_urdf_path).getroot()
-    hand = component(root, f"G1Dex3System{side.capitalize()}")
-
-    assert hand.find("hardware/plugin").text == "g1_hand_interface/G1Dex3System"
-    params = {p.get("name"): p.text for p in hand.findall("hardware/param")}
-    assert params["side"] == side
-    assert {"kp", "kd", "command_publish_rate", "max_joint_velocity_rad_s"} <= params.keys()
-    # Only the first ChannelFactory::Init in the process applies, so a component that disagreed
-    # would sit on a channel that never carries traffic.
-    body = component(root, "G1LowCmdSystem")
-    for shared in ("domain_id", "network_interface"):
-        assert params[shared] == body.find(f"hardware/param[@name='{shared}']").text, shared
-
-    joints = hand.findall("joint")
-    assert [j.get("name") for j in joints] == [
-        f"{side}_hand_{suffix}_joint"
-        for suffix in (
-            "thumb_0",
-            "thumb_1",
-            "thumb_2",
-            "middle_0",
-            "middle_1",
-            "index_0",
-            "index_1",
-        )
-    ]
-    for joint in joints:
-        assert [c.get("name") for c in joint.findall("command_interface")] == ["position"]
-        limits = {p.get("name"): float(p.text) for p in joint.findall("param")}
-        assert limits["min"] < limits["max"]
+    assert [c.get("name") for c in root.findall("ros2_control")] == ["G1LowCmdSystem"]
