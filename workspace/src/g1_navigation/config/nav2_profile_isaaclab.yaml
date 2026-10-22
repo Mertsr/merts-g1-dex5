@@ -1,0 +1,47 @@
+# Overlay on nav2_params.yaml for walk_policy:=isaaclab, loaded AFTER it by nav2.launch.py, so
+# only the values below change. Everything here undoes a choice nav2_params.yaml made for
+# walker.onnx's bang-bang gait (stop / ~0.6 m/s / ~1.57 rad/s, large dead zone) -- read that
+# file's comments for why each was set the way it was.
+#
+# The IsaacLab policy tracks slow and mixed commands, and g1_gait_shaper_isaaclab.yaml now
+# passes curves through (blend: true), so Nav2 can be a normal smooth controller again.
+#
+# *** Every number here is a GUESS for a first pass, not a measurement. ***
+controller_server:
+  ros__parameters:
+    general_goal_checker:
+      # nav2_params.yaml's 0.5 was sized for overshoot at an undecelerated 0.6 m/s. With
+      # approach scaling on, the robot arrives slowly enough for a tighter goal.
+      xy_goal_tolerance: 0.25
+      yaw_goal_tolerance: 0.3
+    FollowPath:
+      # Rotation shim: only stop and turn in place on a LARGE heading error (~35 deg). Smaller
+      # errors are now steered out by RPP's curvature while walking, which the blended shaper
+      # lets through.
+      angular_dist_threshold: 0.6
+      # Gentler in-place turns. walker needed 1.57 to clear its 1.20 dead zone; this policy
+      # does not.
+      rotate_to_heading_angular_vel: 0.8
+      max_angular_accel: 3.2
+      rotate_to_heading_angular_accel: 3.2
+
+      # Slower cruise, and the regulation features turned back ON: on walker, slowing down
+      # meant dropping into the dead zone and stopping dead; here it means slowing down.
+      desired_linear_vel: 0.4
+      use_regulated_linear_velocity_scaling: true
+      regulated_linear_scaling_min_radius: 0.9
+      regulated_linear_scaling_min_speed: 0.15
+      min_approach_linear_velocity: 0.1
+      approach_velocity_scaling_dist: 0.6
+
+      # Shorter lookahead now that curvature steering actually reaches the gait: tracks the
+      # path more tightly at the slower speed.
+      lookahead_dist: 0.6
+
+behavior_server:
+  ros__parameters:
+    # nav2_params.yaml pinned Spin at 1.2-1.57 rad/s to clear walker's yaw dead zone. Back
+    # towards upstream's range.
+    max_rotational_vel: 1.0
+    min_rotational_vel: 0.4
+    rotational_acc_lim: 3.2

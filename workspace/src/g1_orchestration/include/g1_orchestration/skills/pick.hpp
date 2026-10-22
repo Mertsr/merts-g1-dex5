@@ -1,11 +1,6 @@
 #ifndef G1_ORCHESTRATION__SKILLS__PICK_HPP_
 #define G1_ORCHESTRATION__SKILLS__PICK_HPP_
 
-/**
- * @file pick.hpp
- * @brief BT leaf for the Pick skill.
- */
-
 #include <g1_msgs/action/pick.hpp>
 #include <string>
 
@@ -14,11 +9,8 @@
 namespace g1_orchestration
 {
 
-/**
- * @brief Picks a named object up.
- *
- * No pose port: the server reads it fresh from /objects, so a retry never replays a stale one.
- */
+/// Picks a named object up. The pose is not a port: the skill reads it fresh from /objects, so
+/// a retry re-reads rather than replaying a stale one.
 class Pick : public SkillActionNode<g1_msgs::action::Pick>
 {
 public:

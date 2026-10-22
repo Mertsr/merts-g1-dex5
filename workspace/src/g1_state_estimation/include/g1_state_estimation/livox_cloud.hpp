@@ -3,7 +3,10 @@
 
 /**
  * @file livox_cloud.hpp
- * @brief Livox CustomMsg -> PointCloud2, hardware only, split out so it tests without a Mid360.
+ * @brief The Livox CustomMsg -> PointCloud2 conversion, split out so it can be tested.
+ *
+ * Hardware-only code: in simulation the relay publishes the PointCloud2 directly. Nothing in
+ * the sim acceptance test reaches it, so it gets its own unit test instead.
  */
 
 #include <livox_ros_driver2/msg/custom_msg.hpp>
@@ -12,11 +15,11 @@
 namespace g1_state_estimation
 {
 
-/**
- * @brief Fills @p cloud with @p custom's points as xyz + intensity, keeping header and frame.
- *
- * Per-point time and line are dropped; only FAST-LIO uses them, from the CustomMsg itself.
- */
+/// Fills @p cloud with @p custom's points as xyz + intensity, preserving header and frame.
+///
+/// The per-point time and line index are dropped: only FAST-LIO wants them, and it reads the
+/// CustomMsg itself. Reflectivity becomes intensity, which is the field every consumer of
+/// /livox/lidar already reads.
 void toPointCloud2(
     const livox_ros_driver2::msg::CustomMsg& custom, sensor_msgs::msg::PointCloud2& cloud);
 

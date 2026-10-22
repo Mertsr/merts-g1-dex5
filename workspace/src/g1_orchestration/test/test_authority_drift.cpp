@@ -1,8 +1,15 @@
 /**
  * @file test_authority_drift.cpp
- * @brief The acquire sequence matches g1_bringup's activate_arm, and never leaves the arm unowned.
+ * @brief The BT's acquire sequence against g1_bringup's script, the other implementation of it.
  *
- * The script is read as text: importing it needs rclpy and a graph.
+ * Two places now know how to take the arm: this package, in C++, for a mission, and
+ * g1_bringup/scripts/activate_arm, in Python, for an operator. They must name the same
+ * components and controllers, because a rename that reaches only one of them leaves the other
+ * timing out against a component that no longer exists -- and it would time out at exactly the
+ * moment a mission tried to grasp something.
+ *
+ * The script is read as text rather than imported: importing it needs rclpy and a graph, and
+ * what is being compared is the names it declares, which are literals.
  */
 
 #include <gmock/gmock.h>
@@ -33,73 +40,22 @@ TEST(AuthorityDrift, EveryNameThisPackageUsesAppearsInTheScript)
 
     for (const g1_orchestration::ControlledPart& part : g1_orchestration::controlledParts())
     {
-        // Empty names are skipped: an empty string matches anything.
-        if (!part.component.empty())
-        {
-            EXPECT_THAT(script, ::testing::HasSubstr(part.component))
-                << part.component << " is not named in activate_arm";
-        }
+        EXPECT_THAT(script, ::testing::HasSubstr(part.component))
+            << part.component << " is not named in activate_arm";
         EXPECT_THAT(script, ::testing::HasSubstr(part.controller))
             << part.controller << " is not named in activate_arm";
-        if (!part.displaces.empty())
-        {
-            EXPECT_THAT(script, ::testing::HasSubstr(part.displaces))
-                << part.displaces << " is not named in activate_arm";
-        }
     }
 }
 
-TEST(AuthorityDrift, TheArmComesFirstAndTheLeftHandFollows)
+TEST(AuthorityDrift, TheArmComesFirstAndBothHandsFollow)
 {
-    // acquireArm treats parts.front() as the required arm; the hands behind it are best-effort.
+    // Order is not cosmetic. The arm is the part whose failure fails the whole acquire, and
+    // the hands are best-effort behind it, so the arm has to be parts.front().
     const auto& parts = g1_orchestration::controlledParts();
-    ASSERT_EQ(parts.size(), 2U);
-    EXPECT_EQ(parts[0].controller, "arm_trajectory_controller");
-    EXPECT_EQ(parts[1].component, "G1Dex5SystemLeft");
-    EXPECT_EQ(parts[1].controller, "left_hand_controller");
-}
-
-TEST(AuthorityDrift, TheArmsAreNeverUnowned)
-{
-    // An unclaimed joint is unpowered, so the freeze must leave in the same switch the
-    // trajectory controller arrives in.
-    const auto& parts = g1_orchestration::controlledParts();
-    EXPECT_TRUE(parts.front().component.empty())
-        << "the body component is active from bring-up and must not be cycled";
-    EXPECT_EQ(parts.front().displaces, "arm_freeze_controller");
-}
-
-TEST(ArmSwitch, AnIncomingControllerThatIsNotLoadedSwitchesNothingAtAll)
-{
-    // Nothing may be asked for: deactivating the freeze alone would leave the arm unpowered.
-    const auto plan = g1_orchestration::planArmSwitch("", "active");
-    EXPECT_FALSE(plan.possible) << "the holder must be left alone when nothing can replace it";
-}
-
-TEST(ArmSwitch, ALoadedButUnconfiguredControllerIsStillWorthTrying)
-{
-    // Between load and configure the controller exists but may not activate; STRICT then does
-    // both halves or neither.
-    const auto plan = g1_orchestration::planArmSwitch("unconfigured", "active");
-    EXPECT_TRUE(plan.possible);
-    EXPECT_FALSE(plan.already_held);
-    EXPECT_TRUE(plan.displace);
-}
-
-TEST(ArmSwitch, AnArmAlreadyHeldIsLeftAlone)
-{
-    // STRICT fails on activating an active controller, and AcquireArm may not be the first.
-    const auto plan = g1_orchestration::planArmSwitch("active", "inactive");
-    EXPECT_TRUE(plan.possible);
-    EXPECT_TRUE(plan.already_held);
-}
-
-TEST(ArmSwitch, NothingIsDeactivatedWhenTheOutgoingControllerIsNotHoldingAnything)
-{
-    // STRICT fails on deactivating an inactive controller, so a second release only activates.
-    const auto plan = g1_orchestration::planArmSwitch("inactive", "inactive");
-    EXPECT_TRUE(plan.possible);
-    EXPECT_FALSE(plan.displace);
+    ASSERT_EQ(parts.size(), 3U);
+    EXPECT_EQ(parts[0].component, "G1ArmSdkSystem");
+    EXPECT_EQ(parts[1].component, "G1HandSystemLeft");
+    EXPECT_EQ(parts[2].component, "G1HandSystemRight");
 }
 
 int main(int argc, char** argv)

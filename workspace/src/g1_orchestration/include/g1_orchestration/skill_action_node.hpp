@@ -5,14 +5,17 @@
  * @file skill_action_node.hpp
  * @brief The base for leaves whose action reports `success` and `message`.
  *
- * Every skill server in this stack answers with those two fields, so a leaf deriving from here
- * only writes fillGoal().
+ * Every skill server in this stack answers with those two fields, so judging the outcome is the
+ * same code five times over. Deriving from here instead of RosActionNode leaves a leaf with
+ * only fillGoal() to write.
+ *
+ * NavigateToPose is the exception and derives from RosActionNode directly: Nav2's result is
+ * empty, so reaching the goal is reported by the result CODE alone.
  */
 
 #include <behaviortree_cpp/basic_types.h>
 
 #include <rclcpp/rclcpp.hpp>
-#include <rclcpp_action/rclcpp_action.hpp>
 #include <string>
 #include <utility>
 
@@ -21,22 +24,14 @@
 namespace g1_orchestration
 {
 
-/**
- * @brief Turns a skill result into a node status, logging the server's own reason.
- *
- * An aborted goal still carries a result, and its message is the only record of why.
- *
- * @tparam ResultT The action client's wrapped-result type.
- * @param logger Where the outcome is reported.
- * @param name Leaf name, used as the log prefix.
- * @param wrapped The completed goal's wrapped result.
- * @param reason Set to the server's message when the leaf fails, or to what ended the goal.
- * @return SUCCESS only when the goal succeeded and the skill reported success.
- */
+/// Turns a skill result into a node status, logging the server's own reason.
+///
+/// An ABORTED goal still carries its result, and that message is the only place the reason
+/// exists. Logging a bare "did not complete" threw it away at exactly the moment it was wanted
+/// and cost a full mission re-run per diagnosis.
 template <typename ResultT>
-BT::NodeStatus judgeSkillResult(
-    const rclcpp::Logger& logger, const std::string& name, const ResultT& wrapped,
-    std::string& reason)
+BT::NodeStatus
+judgeSkillResult(const rclcpp::Logger& logger, const std::string& name, const ResultT& wrapped)
 {
     if (wrapped.code != rclcpp_action::ResultCode::SUCCEEDED)
     {
@@ -48,24 +43,19 @@ BT::NodeStatus judgeSkillResult(
             name.c_str(),
             why.empty() ? "" : ": ",
             why.c_str());
-        reason = why.empty() ? describeResultCode(wrapped.code) : why;
         return BT::NodeStatus::FAILURE;
     }
     if (!wrapped.result->success)
     {
+        // The message names the phase that failed, which is the actionable part: "the pick
+        // failed" is not, "grasp: the hand did not close" is.
         RCLCPP_ERROR(logger, "[%s] %s", name.c_str(), wrapped.result->message.c_str());
-        reason = wrapped.result->message;
         return BT::NodeStatus::FAILURE;
     }
     RCLCPP_INFO(logger, "[%s] %s", name.c_str(), wrapped.result->message.c_str());
     return BT::NodeStatus::SUCCESS;
 }
 
-/**
- * @brief Base for leaves whose action result carries `success` and `message`.
- *
- * @tparam ActionT The ROS action this leaf drives.
- */
 template <typename ActionT>
 class SkillActionNode : public RosActionNode<ActionT>
 {
@@ -82,14 +72,7 @@ public:
 protected:
     BT::NodeStatus judgeResult(const WrappedResult& result) override
     {
-        std::string reason;
-        const auto  status =
-            judgeSkillResult(this->node_->get_logger(), this->name(), result, reason);
-        if (status == BT::NodeStatus::FAILURE)
-        {
-            this->setFailureText(std::move(reason));
-        }
-        return status;
+        return judgeSkillResult(this->node_->get_logger(), this->name(), result);
     }
 };
 

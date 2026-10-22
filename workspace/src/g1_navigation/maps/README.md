@@ -1,29 +1,29 @@
 # maps
 
-One occupancy grid per world that has a map. `localization.launch.py` picks the one for `world:=`:
-`facility` for `navigation`, `apartment` for `apartment`, and `facility` for anything else.
-
-`facility` is the `navigation` world (`g1_navigation_scene.xml`), mapped with `mode:=mapping`:
-361 by 359 cells at 5 cm, origin `[-9.05, -8.96]`, covering the 18 by 18 m facility with all four
-rooms, the doorways, the shelving, the workbench and the pillars.
-
-`apartment` is the `apartment` world: 420 by 260 cells at 5 cm, origin `[-5.5, -6.5]`.
-`g1_bringup`'s `tools/build_world.py` rasterizes it from the scene instead of mapping it; see
-[worlds/README.md](../../g1_bringup/worlds/README.md).
+`facility` is the `g1_navigation_scene` world, mapped with `mode:=mapping` while the robot was
+driven around the four rooms. 361 by 359 cells at 5 cm, origin `[-9.05, -8.96]`, covering 18.1 by
+18.0 m against a facility that is 18 by 18 m. All four rooms, the corridor doorways, the shelving,
+the workbench and the pillars are resolved.
 
 ## Only the occupancy grid is committed
 
-`map_saver_cli` writes `facility.pgm` and `facility.yaml`. slam_toolbox's serialized pose graph,
-which its `localization` mode needs, comes out at 33 MB for this map against 130 KB for the grid,
-so localization runs on `nav2_map_server` and AMCL instead.
+`map_saver_cli` produces `facility.pgm` and `facility.yaml`, which is what is here. slam_toolbox can
+also serialize its pose graph, and that is what its `localization` mode loads, but for this map
+those come out at 33 MB and 1.6 MB against 130 KB for the grid. A 33 MB binary that has to be
+regenerated whenever the scene changes does not belong in git.
 
-## Regenerating the facility map
+The consequence is that localization runs on `nav2_map_server` and AMCL rather than slam_toolbox's
+`localization` mode, which needs the pose graph. The cost is worth knowing: AMCL's motion model is
+parameterised on odometry noise, and this track's odometry is exact ground truth, so the model is
+degenerate and its `alpha1` through `alpha5` cannot be tuned to anything that transfers to hardware.
+
+## Regenerating
 
 ```bash
 ros2 launch g1_bringup bringup.launch.py mode:=mapping
 # drive the robot through all four rooms, then:
-ros2 run nav2_map_server map_saver_cli -f /root/workspace/src/g1_navigation/maps/facility
+ros2 run nav2_map_server map_saver_cli -f facility
 ```
 
-Re-map whenever `g1_bringup`'s `g1_navigation_scene.xml` changes. Nothing checks that a map still
-matches its scene; a stale map shows up as Nav2 planning through walls that moved.
+Re-map whenever `g1_bringup`'s `g1_navigation_scene.xml` changes. Nothing checks that the committed
+map still matches the scene, and a stale map shows up as Nav2 planning through walls that moved.

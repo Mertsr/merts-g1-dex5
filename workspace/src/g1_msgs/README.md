@@ -1,52 +1,84 @@
 # g1_msgs
 
-The stack's own interfaces: the actions the behavior tree calls on `g1_locomotion`,
-`g1_manipulation` and `g1_vla`, and the services behind the learned grasp and open-vocabulary
-perception. The instance masks a detector publishes, and the world model's interfaces, are in
-`canopy_msgs`. `ament_cmake` with `rosidl_default_generators`, no source and no tests of its own
-beyond CMake and XML lint.
+The stack's own interfaces: what `g1_locomotion` needs to drive the LocoClient bridge and the
+base approach, and what `g1_manipulation` serves to the behavior tree. Six actions and one
+message.
+
+`ament_cmake` with `rosidl_default_generators`. No source of its own.
 
 ```mermaid
 flowchart LR
-    BT["g1_bt_executor"] -- "Pick, Place,<br/>SetArmPosture" --> MS["g1_manipulation_server"]
-    BT -- "ApproachObject, Retreat,<br/>StepClear" --> BA["g1_base_approach"]
-    BT -- "Grasp" --> VS["g1_vla_server"]
-    VS -- "GetActionChunk" --> PE["policy engine"]
-    MS -- "GenerateGrasps" --> GS["grasp source"]
-    D["detector"] -- "InstanceMaskArray<br/>(canopy_msgs)" --> G["g1_object_geometry"]
+    AU["g1_loco_authority"] -- "SetLocoMode goal" --> BR["g1_loco_bridge"]
+    CLI["ros2 action send_goal"] -- "SetLocoMode goal" --> BR
+    BR -- "LocoStatus<br/>fsm_id, authority,<br/>last_error_code" --> AU
+    BT["g1_bt_executor"] -- "Pick, Place,<br/>SetArmPosture goals" --> MS["g1_manipulation_server"]
 ```
 
 ```bash
-./scripts/manage.sh build g1_msgs
+colcon build --symlink-install --packages-select g1_msgs
 ```
 
-## Actions
+## action/SetLocoMode.action
 
-All seven are actions because each runs for seconds and must be cancellable. Every one except
-`SetArmPosture` publishes its phase as feedback. `Pick`, `Place`, `ApproachObject`, `Retreat` and
-`StepClear` also prefix a failure message with the phase. The phase strings are constants in the
-`.action` files, so servers and tests share one definition.
+| Field | Meaning |
+|---|---|
+| `fsm_id` (goal) | Target FSM id. Only `DAMP` (1), `STAND_UP` (4) and `START` (500) are accepted; the bridge rejects anything else and logs why. |
+| `success`, `error_code` (result) | `error_code` is the raw LocoClient wire status: `0` on success, otherwise `7301`, `7302`, or a correlator timeout. |
+| `message` (result) | Context for logs and CLI use. Not meant to be parsed. |
 
-| Action | Server | Goal | Notes |
-|---|---|---|---|
-| `Pick` | `g1_manipulation_server` | `object_id`, `arm` | The pose is read from `/objects` when the goal starts, so a retry re-reads it. An object not seen recently fails the goal. |
-| `Place` | `g1_manipulation_server` | `surface_object_id` or `pose`, `arm` | `pose` is where the object ends up, not the palm, and is transformed into the planning frame on arrival. Prefer the surface: it comes from `/objects`, the stream the approach drove against. |
-| `SetArmPosture` | `g1_manipulation_server` | `group`, `named_target` | Named SRDF poses only; an unknown name fails the goal. |
-| `ApproachObject` | `g1_base_approach` | `object_id`, `arm`, `working_yaw`, `use_current_heading`, `timeout_s` | Walks the base until the object is inside the arm's reach window, judged in the base frame. Nav2 only parks within 0.5 m. |
-| `Retreat` | `g1_base_approach` | `distance_m`, `timeout_s` | Reverses clear of a surface and stops, without turning. |
-| `StepClear` | `g1_base_approach` | `clearance_m`, `timeout_s` | Turns, then walks straight out of the band where Nav2 counts the robot as touching an obstacle. Succeeds at once when already clear. |
-| `Grasp` | `g1_vla_server` | `instruction`, `object_id`, `arm` | Runs a learned policy under a planning-scene check. Success is the measured lift of `object_id`. Feedback counts chunks executed and rejected. |
+`Squat`, `Sit` and `ZeroTorque` have no constants here. Nothing needs them, and their transition
+legality was never checked against a real onboard controller.
 
-## Services
+There is no feedback field. The exchange either completes or times out within a few seconds, with
+nothing meaningful to report mid-flight.
 
-| Service | Server | Notes |
+## The manipulation actions
+
+Served by `g1_manipulation_server`, called by the behavior tree in `g1_orchestration`.
+
+| Action | Goal | Notes |
 |---|---|---|
-| `GetActionChunk` | a `g1_vla` policy engine | `instruction` in, one chunk of absolute joint positions out. Positions may name any subset of the arm and hand joints; `time_from_start` must increase. `new_episode` marks a goal's first request. |
-| `GenerateGrasps` | a `g1_perception` grasp source | Object id and hand in, poses and scores out, best first. Poses are in the generator's own gripper frame; the caller applies one measured offset. |
-| `GroundInstruction` | `g1_instruction_grounder` | Instruction in, detector phrases and the target phrase out, plus optional exemplar pixels. |
+| `Pick` | `object_id`, `arm` | No pose in the goal. The server reads it from `/objects` when the goal starts, so a retry re-reads rather than replaying a stale one, and an object that is missing or stale there is a rejected goal rather than a guess. |
+| `Place` | `surface_object_id` **or** `pose`, `arm` | Prefer the surface: the server reads it from `/objects` and stands the object on top of it, so the place and the approach that preceded it agree however far localization has drifted. A `pose` is where the **object** ends up, not where the palm goes, transformed into the planning frame on arrival. |
+| `SetArmPosture` | `group`, `named_target` | Named SRDF poses only, so a tree can say `tucked` without carrying fourteen joint values in XML. An unknown name is rejected, rather than silently holding position. |
 
-## Messages
+## The locomotion skill actions
 
-| Message | Carries | Notes |
+Served by `g1_base_approach` in `g1_locomotion`, called by the same behavior tree.
+
+| Action | Goal | Notes |
 |---|---|---|
-| `ExemplarPoint` | `phrase`, `x`, `y` | A pixel on one object, returned by `GroundInstruction` to tell instances of a phrase apart. |
+| `ApproachObject` | `object_id`, `arm`, `working_yaw`, `use_current_heading`, `timeout_s` | Walks the base until the object is inside the arm's reach window, judged in the base frame. Nav2 parks within 0.5 m and the window is about 0.2 m wide. |
+| `Retreat` | `distance_m`, `timeout_s` | Reverses clear of a surface and stops. No turn: a navigation goal normally follows. |
+
+`Pick` and `Place` publish a phase as feedback, and their result message names that phase on
+failure. The phases are constants in the `.action` files so the server and its tests share one
+definition instead of matching string literals. `SetArmPosture` has no feedback, for the same
+reason `SetLocoMode` has none.
+
+## msg/LocoStatus.msg
+
+| Field | Meaning |
+|---|---|
+| `stamp` | When the status was produced. |
+| `fsm_id` | Last FSM id the bridge knows to be true. `-1` before it has any information. |
+| `authority` | `RELEASED`, `ACQUIRING`, `HELD` or `RELEASING`. Whether the bridge holds velocity-command authority. |
+| `last_error_code` | Most recent wire status code seen, from a mode goal or a velocity request. |
+| `ignored_cmd_vel` | How many non-zero velocity samples the bridge discarded for lack of authority. |
+
+`ignored_cmd_vel` is monotonic and never reset on acquire, so a reader can assert that it stopped
+increasing. Zero commands are not counted, because publishers idle at zero routinely and an idle
+publisher is not a dropped intent. The counter exists because "the planner is running and the robot
+is stationary" is otherwise silent.
+
+## Why actions rather than services
+
+Completion is asynchronous. The LocoClient wire exchange is two plain topics: a request published
+now, a response correlated to it later. A Humble service callback has to populate its response
+before returning, so waiting there would block the executor. An action's `handle_accepted` returns
+immediately and reports the outcome later through the goal handle, which matches the protocol's own
+asynchrony.
+
+The manipulation actions are actions for a second reason as well: a pick runs for seconds and has
+to be cancellable part-way, because a behavior tree that halts a running skill needs the arm to
+stop rather than finish.

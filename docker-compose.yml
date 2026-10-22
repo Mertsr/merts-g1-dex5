@@ -3,20 +3,20 @@ name: ${COMPOSE_PROJECT_NAME:-ros2_project_template}
 services:
   ros-dev:
     # Derived development image (distinct from BASE_IMAGE)
-    image: ${DEV_IMAGE_REPO:-adyansh04/ros-dev-workspace}:${ROS_DISTRO:-jazzy}
+    image: ${DEV_IMAGE_REPO:-adyansh04/ros-dev-workspace}:${ROS_DISTRO:-humble}
     build:
       context: .
       dockerfile: .devcontainer/Dockerfile
       args:
         # Base image from your pre-built upstream images
-        BASE_IMAGE: ${BASE_IMAGE_REPO:-adyansh04/ros-dev}:${ROS_DISTRO:-jazzy}${BASE_IMAGE_TAG_SUFFIX:--latest}
+        BASE_IMAGE: ${BASE_IMAGE_REPO:-adyansh04/ros-dev}:${ROS_DISTRO:-humble}${BASE_IMAGE_TAG_SUFFIX:--latest}
 
     # Keep the container running and attachable
     tty: true
     stdin_open: true
 
     # Container name includes the ROS distro for clarity
-    container_name: ${CONTAINER_PREFIX:-ros_dev}_${ROS_DISTRO:-jazzy}
+    container_name: ${CONTAINER_PREFIX:-ros_dev}_${ROS_DISTRO:-humble}
 
     # Persistent host mounts using long (object) syntax
     volumes:
@@ -29,9 +29,13 @@ services:
         target: /root/workspace/.vscode
         read_only: false
 
-      # Repo root, outside /root/workspace. The image links /root/<config> here and
-      # workspace/<config> is a relative symlink to the root, so both sides read one file.
-      # Single-file binds broke whenever an editor saved by rename.
+      # Repo root, mounted OUTSIDE /root/workspace on purpose. Replaces four single-file
+      # binds for .clangd/.clang-format/.clang-tidy/ruff.toml, which pinned the host inode
+      # (editor save-by-rename left the container reading a detached file until a recreate)
+      # and, being nested inside the workspace mount, made Docker create empty root-owned
+      # placeholders on the host that then shadowed the real configs. The image symlinks
+      # /root/<config> here, and workspace/<config> is a committed relative symlink to the
+      # repo root, so both host and container resolve the same file.
       - type: bind
         source: .
         target: /root/.host-repo
@@ -68,8 +72,10 @@ services:
 
     # GUI environment
     environment:
-      # DDS and domain, set here so every shell sees them, including the non-login one
-      # `manage.sh exec` opens. For a real G1, set the GROVE_G1_* values in .env; see README.
+      # DDS/domain, resolved here so EVERY shell in the container sees them -- the image's own
+      # ENV would be overridden silently, and /etc/profile.d only runs for login shells, so
+      # `manage.sh exec` (interactive non-login) would never have picked an override up.
+      # Pointing the container at a real G1 is these three in .env; see README.
       - ROS_DOMAIN_ID=${GROVE_G1_ROS_DOMAIN_ID:-1}
       - GROVE_G1_ROS_DOMAIN_ID=${GROVE_G1_ROS_DOMAIN_ID:-1}
       - CYCLONEDDS_URI=${GROVE_G1_CYCLONEDDS_URI:-file:///etc/cyclonedds/cyclonedds.xml}
@@ -78,7 +84,7 @@ services:
       - GROVE_G1_ROBOT_NIC=${GROVE_G1_ROBOT_NIC:-eth0}
       - DISPLAY=${DISPLAY}
       - QT_X11_NO_MITSHM=1
-      - ROS_DISTRO=${ROS_DISTRO:-jazzy}
+      - ROS_DISTRO=${ROS_DISTRO:-humble}
       - NVIDIA_DRIVER_CAPABILITIES=all
       - __GLX_VENDOR_LIBRARY_NAME=nvidia
       - __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json

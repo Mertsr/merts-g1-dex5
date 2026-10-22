@@ -1,4 +1,0 @@
-# Test code only: pluginlib's ClassLoader destructor makes a virtual call inside its own header
-# (class_loader_imp.hpp), where a NOLINT at our call site cannot reach it.
-InheritParentConfig: true
-Checks: '-clang-analyzer-optin.cplusplus.VirtualCall'

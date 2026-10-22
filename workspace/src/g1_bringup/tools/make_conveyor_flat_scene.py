@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Generate g1_conveyor_flat_scene.xml: the conveyor world with the panels on a plain table.
+
+world:=conveyor_flat is g1_conveyor_scene.xml exactly -- tray floor, conveyor, pallet, robot, the
+four BSH panels resting where they rest there -- except that the tray's rim (its three walls)
+and the low stop bars between the panels are gone. The real line has no basket: the panels lie
+on a bare table. That matters for the grasp that holds a panel, the scoop (g1_perception's
+scoop_<hand>_<edge> grasps in object_tracker_conveyor_flat.yaml): the hand slides in palm up
+along the table under the panel's edge lip, which stands 27 mm off it, and the rim and the stop
+bar in front of the first panel are exactly where the hand has to go.
+
+Without the stops the panels still settle where they did (measured: part_tray_1's body at
+1.5949, -0.8005, 0.7375 either way), so the tracker's tray priors hold unchanged.
+
+The table also reaches TABLE_FRONT_X (1.40) toward the robot instead of the tray's 1.49, with its
+near legs moved along: the first panel's edge then lies 12 cm in from the table's edge rather
+than 2.7. The scoop starts with the fingertips on the table just in front of that edge, and with
+2.7 cm of table there a hand 5 mm low put them over the corner and down the table's front
+(measured in MuJoCo with the simulator's arm gains and gravity compensation); with 12 cm it
+held at -5, 0 and +5 mm. The robot still stands close enough: the scoop was reached from a pelvis
+18-20 cm behind the new edge.
+
+The panels' two windows are closed, as on the real part (a glass display and a glass label
+strip sit flush in them): each panel body gets two 3 mm covers, flush with the plate around the
+window and lapping 3 mm onto its frame, visible and colliding, massless (the panel stays
+0.3 kg). Measured from BSH_panel.stl's top surface (window outline and a plane fitted to the
+plate around it, 0.7-0.9 mm rms); g1_perception's models/bsh_panel_closed.stl is the same STL
+with the same two slabs, the tracker's model for this world.
+
+    make_conveyor_flat_scene.py            # default paths
+"""
+
+import argparse
+import pathlib
+import re
+
+TABLE_FRONT_X = 1.40
+TRAY_FLOOR = (
+    '<geom name="tray_floor" group="2" type="box" size="0.34 0.45 0.015" pos="1.83 -0.80 0.695"'
+)
+NEAR_LEG_X = "1.51"
+
+# The window covers, in the panel's BODY frame (BSH_panel.stl minus the mesh refpos): box half
+# sizes, centre, orientation (w x y z). Along the panel (x), 3 mm thick (y, the body's down), and
+# across it (z).
+WINDOW_COVERS = (
+    (
+        "cover_display",
+        "0.0880 0.0015 0.0420",
+        "0.1749 -0.0302 -0.0012",
+        "0.99678 -0.07805 -0.00145 0.01853",
+    ),
+    (
+        "cover_label",
+        "0.0960 0.0015 0.0480",
+        "-0.1830 -0.0261 -0.0132",
+        "0.99775 -0.06506 0.00105 -0.01615",
+    ),
+)
+
+
+def close_windows(s):
+    """Two covers into every panel body (part_*), after its free joint."""
+
+    def add(m):
+        body = m.group(1)
+        geoms = "".join(
+            f'\n      <geom name="{body}_{name}" group="2" type="box" size="{size}" pos="{pos}" '
+            f'quat="{quat}" material="mat_part" density="0" contype="1" conaffinity="1" '
+            'friction="1 0.01 0.0001"/>'
+            for name, size, pos, quat in WINDOW_COVERS
+        )
+        return m.group(0) + geoms
+
+    return re.subn(r'<body name="(part_[a-z_0-9]+)"[^>]*>\n\s*<joint[^>]*/>', add, s)
+
+
+def main():
+    here = pathlib.Path(__file__).resolve().parent
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument(
+        "--src", type=pathlib.Path, default=here.parent / "mjcf" / "g1_conveyor_scene.xml"
+    )
+    p.add_argument(
+        "--dst", type=pathlib.Path, default=here.parent / "mjcf" / "g1_conveyor_flat_scene.xml"
+    )
+    a = p.parse_args()
+
+    s = a.src.read_text()
+    s, n = re.subn(r'\n\s*<geom name="tray_(?:wall|stop)_[^"]*"[^>]*/>', "", s)
+    if n == 0:
+        raise SystemExit(f"{a.src}: no tray_wall_* / tray_stop_* geoms to remove")
+    if s.count(TRAY_FLOOR) != 1:
+        raise SystemExit(f"{a.src}: tray_floor is not where this tool expects it")
+    back = 1.83 + 0.34
+    half = (back - TABLE_FRONT_X) / 2
+    s = s.replace(
+        TRAY_FLOOR,
+        f'<geom name="tray_floor" group="2" type="box" size="{half:.4f} 0.45 0.015" '
+        f'pos="{back - half:.4f} -0.80 0.695"',
+    )
+    s, legs = re.subn(
+        r'(<geom name="tray_leg_[34]"[^>]*\n\s*pos=")' + re.escape(NEAR_LEG_X),
+        rf"\g<1>{TABLE_FRONT_X + 0.02:.2f}",
+        s,
+    )
+    if legs != 2:
+        raise SystemExit(
+            f"{a.src}: expected the two near tray legs at x {NEAR_LEG_X}, found {legs}"
+        )
+    s, panels = close_windows(s)
+    if panels == 0:
+        raise SystemExit(f"{a.src}: no panel bodies (part_*) to close the windows of")
+    note = (
+        "<!-- GENERATED by g1_bringup/tools/make_conveyor_flat_scene.py from g1_conveyor_scene.xml:\n"
+        "     the same world with the tray's rim and stop bars removed (the panels lie on a plain\n"
+        f"     table, as on the real line; {n} geoms removed), the table reaching x {TABLE_FRONT_X}\n"
+        f"     toward the robot, and the windows of its {panels} panels closed as on the real part.\n"
+        "     The comments below about the tray's rim, stops and size describe\n"
+        "     the source. Do not edit by hand; edit g1_conveyor_scene.xml\n"
+        "     or the tool and regenerate. -->\n"
+    )
+    s = s.replace(
+        '<mujoco model="g1_conveyor_scene">', '<mujoco model="g1_conveyor_flat_scene">', 1
+    )
+    s = re.sub(r"(<mujoco[^>]*>\n)", r"\1" + note, s, count=1)
+    a.dst.write_text(s)
+    print(f"wrote {a.dst} ({n} rim/stop geoms removed, {panels} panels' windows closed)")
+
+
+if __name__ == "__main__":
+    main()

@@ -5,8 +5,7 @@
   <version>0.1.0</version>
   <description>
     Unitree G1 (hand-equipped, 29-DoF) URDF, vendored kinematics-only, plus the
-    xacro wrappers that add shared sensor frames and the ros2_control block for
-    all 29 body motors on G1LowCmdSystem. Dex5 hand descriptions are in the plain URDF.
+    ros2_control xacro wrapper exporting the 14 arm joints for G1ArmSdkSystem.
   </description>
   <maintainer email="gupta.adyansh@gmail.com">Adyansh</maintainer>
   <license>BSD-3-Clause</license>

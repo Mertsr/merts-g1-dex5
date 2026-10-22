@@ -1,4 +1,6 @@
-"""Hand the arms and hands back. Reverse of activate_arm (see README)."""
+"""Deactivate arm controller and hardware component (reverse of activate_arm).
+
+The component's on_deactivate ramp blocks for blend_ramp_down_s by design."""
 
 from launch import LaunchDescription
 from launch.actions import ExecuteProcess

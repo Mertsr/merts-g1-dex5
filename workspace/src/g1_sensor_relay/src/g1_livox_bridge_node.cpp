@@ -2,8 +2,17 @@
  * @file g1_livox_bridge_node.cpp
  * @brief Restates the simulator's sweep as the Livox CustomMsg FAST-LIO consumes.
  *
- * Simulation only: on hardware the driver publishes /livox/custom_msg, and two publishers would
- * interleave scans. /livox/imu comes from g1_sensor_relay directly.
+ * FAST-LIO does not consume what the rest of the stack consumes. It wants the CustomMsg, because
+ * that is the only format carrying a per-point timestamp. On the robot livox_ros_driver2 produces
+ * it; in simulation the sweep arrives as a PointCloud2 from g1_sensor_relay and this node converts
+ * it, so the odometry pipeline below is identical in either place.
+ *
+ * The cloud only. The IMU FAST-LIO fuses sits inside the Mid360, the simulator models it there
+ * too, and g1_sensor_relay publishes /livox/imu straight off the sensor socket. See
+ * g1_state_estimation's README for why it is not the pelvis IMU.
+ *
+ * SIMULATION ONLY. On hardware the real driver publishes this topic and this node must not run --
+ * two publishers on /livox/custom_msg would interleave scans from different sources.
  */
 
 #include <memory>
@@ -23,8 +32,11 @@ public:
     LivoxBridge()
       : rclcpp::Node("g1_livox_bridge")
     {
-        // Reliable, depth 20, like livox_ros_driver2: FAST-LIO subscribes reliably and would
-        // not match a best-effort publisher.
+        // RELIABLE, with the depth livox_ros_driver2 uses (lddc.cpp CreatePublisher passes a
+        // bare queue size, which is reliable by default). Not a style choice: FAST-LIO
+        // subscribes reliably, and a best-effort publisher is silently incompatible with that
+        // -- DDS drops the match and logs one warning about RELIABILITY_QOS_POLICY that is easy
+        // to read past.
         custom_pub_ = create_publisher<livox_ros_driver2::msg::CustomMsg>(
             declare_parameter<std::string>("custom_msg_topic", "/livox/custom_msg"),
             rclcpp::QoS(20));

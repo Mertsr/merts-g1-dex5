@@ -1,157 +1,199 @@
 # g1_perception
 
-Finds objects by name and says where they are. A detector segments whatever the phrases ask for,
-and this package turns those masks plus the aligned depth frame into the object poses the
-manipulation skills consume. Nothing here plans or moves anything, and nothing here knows which
-model drew the masks.
+Model-based 6D pose tracking of the line's known parts (the pallet and the BSH panel) from the
+head depth camera, at camera rate. The same code runs in the simulator and on the robot.
 
-```mermaid
-flowchart LR
-    C[/camera/color/image_raw/] --> D[g1_detector]
-    T[/g1_sensor_relay/object_poses/] --> M[g1_detector, mock]
-    D -- InstanceMaskArray --> G[g1_object_geometry]
-    M -- InstanceMaskArray --> G
-    P[/aligned depth + camera_info/] --> G
-    G -- Detection3DArray --> S["g1_object_pose_source<br/>(g1_manipulation)"]
-    S -- /objects --> K[skills]
-    G -. "visualization:=true" .-> V[g1_perception_visualizer]
 ```
+/camera/aligned_depth_to_color/image_raw ─┐
+/camera/aligned_depth_to_color/camera_info ┼─> g1_object_tracker ──> /g1_object_tracker/detections
+TF (odom -> camera)  ─────────────────────┘          │                 (Detection3DArray, camera frame)
+                                                     ├──> TF tracked/<name> (under odom)
+                                                     └──> /diagnostics
+/g1_object_tracker/detections ──> g1_object_pose_source (object_source:=depth_tracker) ──> /objects
+```
+
+## Running it
 
 ```bash
-./scripts/manage.sh build g1_perception
+# Simulator, tracker only (forces sensors:=true). Look at tracked/pallet and tracked/panel in RViz.
+ros2 launch g1_bringup bringup.launch.py world:=conveyor object_tracker:=true rviz:=true
+
+# Skills reading tracked poses instead of ground truth (the tracker starts automatically):
+ros2 launch g1_bringup bringup.launch.py world:=conveyor moveit:=true manipulation:=true \
+    object_source:=depth_tracker
+
+# world:=conveyor2 is the same line with a red drink can (66 x 129 mm) instead of each BSH panel
+# (g1_bringup/tools/make_conveyor2_scene.py); the tracker then loads
+# config/object_tracker_conveyor2.yaml (models/coke_can.stl, objects can_1..4, symmetric_z, side
+# grasps side_right_* / side_left_* taken in g1.srdf's side_open / side_closed) by itself:
+ros2 launch g1_bringup bringup.launch.py world:=conveyor2 moveit:=true manipulation:=true \
+    object_source:=depth_tracker
+
+# world:=conveyor_flat is the line with the panels on a plain table: no tray rim, no stop bars, as
+# on the real line (g1_bringup/tools/make_conveyor_flat_scene.py). The tracker then loads
+# config/object_tracker_conveyor_flat.yaml: the panel config plus the scoop grasps
+# (scoop_<hand>_<edge>, g1.srdf's scoop_open / scoop_closed), which slide the hand in under the
+# panel's edge along the table:
+ros2 launch g1_bringup bringup.launch.py world:=conveyor_flat moveit:=true manipulation:=true \
+    object_source:=depth_tracker
+
+# On its own, against any depth stream with TF:
+ros2 launch g1_perception object_tracker.launch.py config:=/path/to/line.yaml
 ```
 
-## Nodes
+The simulator's camera now renders on its own thread at `camera_rate_hz` (30 Hz in
+`g1_bringup/config/sim_sensors.yaml`) instead of once per 10 Hz LiDAR sweep; rebuild the patched
+`unitree_mujoco` after pulling. Its log line `[grove_g1] camera: X ms/frame (budget 33.3)` shows
+whether the machine keeps up.
 
-| Node | Does |
-|---|---|
-| `g1_detector` | canopy_perception's `detector`, configured by `config/g1_detector.yaml`: sends camera frames and the phrase list to the host vision server and publishes the instance masks it answers with. |
-| `g1_detector` (mock) | canopy_perception's `mock_detector`: cuts the same masks out of simulator ground truth against the real rendered depth. No GPU, no server, no network. Simulation only. Launched as `g1_detector` too, so a tree writes the same `phrases` whichever detector runs. |
-| `g1_object_geometry` | Deprojects each mask, finds the surface the object stands on, fits a box, and tracks it across frames so an id keeps naming one object. |
-| `g1_graspgen_adapter` | Sends the depth frame, its intrinsics and one object's mask to [GraspGenX](https://github.com/NVlabs/GraspGenX) on the host and serves the grasps it answers with. The Dex3-1 goes as its sweep volume (`sweep_volume`, twelve numbers), not by name. Poses come back in the generator's own gripper frame, so the arm side applies one measured offset. Left-hand requests are refused, since mirroring a sweep volume describes a different gripper. Python, see below. |
-| `g1_mock_grasp_source` | Answers the same service from `/objects` alone: three sensible grasps and one reaching up through the table. No GPU. |
-| `g1_instruction_grounder` | Asks a vision-language model on the host to turn an instruction into the noun phrases the detector can be asked for (it takes "red block", not "the mug to the left of the bowl") and writes them onto the detector's `phrases`, its whole control interface. Needs `grounding:=true` and a vision server started with `--vlm`. Python, see below. |
-| `g1_perception_visualizer` | Draws each detection on the frame it was cut from, and the simulator's ground truth labelled with how far off perception is. Only runs with `visualization:=true`. |
-
-`perception.launch.py` takes `detector:=mock|vision` (default `mock`), `phrases`,
-`grasp_engine:=none|mock|graspgen` (default `none`), `grounding` and `visualization` (both default
-`false`), plus `mock_latency_s`, `mock_rate_hz`, `mock_margin_m` and `only_from_below` for the
-stand-ins. `g1_bringup` includes it with `perception:=true`, which needs `manipulation:=true`.
-
-## Interfaces
-
-Names are as `perception.launch.py` remaps them. Masks are `canopy_msgs/InstanceMaskArray` and
-object poses `vision_msgs/Detection3DArray`.
-
-| Node | In | Out |
-|---|---|---|
-| `g1_detector` | `/camera/color/image_raw` | `/g1_perception/instance_masks` |
-| `g1_detector` (mock) | `/g1_sensor_relay/object_poses`, `/camera/aligned_depth_to_color/image_raw`, `/camera/color/camera_info` | `/g1_perception/instance_masks` |
-| `g1_object_geometry` | `/g1_perception/instance_masks`, `/camera/aligned_depth_to_color/image_raw` (32FC1, metres), `/camera/aligned_depth_to_color/camera_info` | `/g1_object_geometry/object_poses`, in the camera frame; `/g1_object_geometry/tracked_masks`, the input masks relabelled with object ids |
-| `g1_graspgen_adapter` | `/g1_object_geometry/tracked_masks`, the depth image and its `camera_info` | `/g1_grasp_engine/generate_grasps` (`g1_msgs/GenerateGrasps`) |
-| `g1_mock_grasp_source` | `/objects` | `/g1_grasp_engine/generate_grasps` |
-| `g1_instruction_grounder` | `/camera/color/image_raw` | `/ground_instruction` (`g1_msgs/GroundInstruction`); writes `phrases` on `/g1_detector` |
-| `g1_perception_visualizer` | `/camera/color/image_raw`, `/camera/color/camera_info`, `/g1_object_geometry/tracked_masks`, `/g1_object_geometry/object_poses`, `/g1_sensor_relay/object_poses` | `/g1_perception_visualizer/annotated_image` (rgb8): masks tinted per object, fitted boxes, `id score` labels, and `unmeasured` on an instance the geometry rejected. `/g1_perception_visualizer/ground_truth` (`MarkerArray`, transient local, in `fixed_frame`): a box per object labelled `<n> mm off` or `not seen` |
-
-Images come in best effort, because the relay publishes that way and a reliable subscriber would
-never match; the detector keeps only the newest frame, since its blocking request would otherwise
-hand the next pass an old one. Masks and poses go out reliable, because a dropped one is seconds
-of blindness. `g1_object_pose_source` in `g1_manipulation` turns
-`/g1_object_geometry/object_poses` into `/objects`, in the `odom` frame. The visualizer draws
-nothing until a frame's masks, poses and image are all in.
-
-## Object ids
-
-An object is published as `<phrase>_<index>`, so `red block` becomes `red_block_0`. The index
-belongs to a track: it follows the object while it is seen and is freed `track_timeout_s` after it
-is not. A phrase seen once with one track keeps that track however far the pose jumps; with more
-than one object under a phrase, tracks match within `track_match_radius_m`.
-
-A detection is also published under the bare phrase, `red_block`, so a tree can name an object
-without knowing its index (`publish_bare_phrase_alias: false` turns that off). The alias follows
-the first object seen alone under its phrase and is withheld from any frame where that object is
-unseen or another one with the same phrase is seen too, so it never jumps between objects.
-
-## Parameters
-
-`config/g1_object_geometry.yaml` documents every key. The ones worth knowing:
-
-| Parameter | Default | Meaning |
-|---|---|---|
-| `up_frame` | `odom` | Where up comes from, and the frame tracking is done in. |
-| `mask_erosion_px` | 2 | Pixels trimmed off each mask; depth at an object's edge is a blend of the object and what is behind it. |
-| `support_ring_px` | 6 | How far outside the mask to look for the surface the object stands on. |
-| `support_band_m` | 0.06 | How far from the object's lowest visible point that surface may be, which keeps the floor and a taller neighbour out of the estimate. |
-| `depth_gate_m` | 0.15 | How deep an object may be before points are treated as leakage. Tighter than this cuts the top off something tall seen from above. |
-| `min_points` | 150 | Below this, counted after the depth gate, an instance is reported as unusable rather than fitted. |
-| `depth_history_s` | 5.0 | How long depth frames are kept for a mask to be paired with; has to outlast the detector's latency, up to about 4 s. |
-| `depth_history_max_frames` | 150 | Frame cap on that history, which bounds its memory at a fast depth rate. |
-| `stamp_tolerance_ms` | 130 | How closely a mask's stamp must match a depth frame's. The nearest frame is taken, so this only has to cover the camera's frame gap under load. |
-| `track_match_radius_m` | 0.08 | How far an object may move between detections and still be itself, when its phrase names more than one. |
-| `track_timeout_s` | 6.0 | How long an unseen track keeps its id and its alias. |
-
-`config/g1_detector.yaml` holds `server_address` (`tcp://127.0.0.1:5560`), `zmq_timeout_ms`
-(20000), `detect_rate_hz` (1.0), `max_image_age_s` (2.5), `box_threshold` (0.40) and
-`text_threshold` (0.25). `phrases` is a launch argument rather than a file key, and
-`ros2 param set` changes it while the node runs. Both detectors re-read it every pass, and an
-empty list idles them; the mission trees use that to run perception only for the steps that need
-it.
-
-The other nodes read `config/g1_perception_visualizer.yaml` (its colour history has to outlast the
-detector's latency), `config/g1_graspgen_adapter.yaml`, `config/g1_instruction_grounder.yaml` and
-`config/g1_mock_grasp_source.yaml`.
-
-## Why two nodes are Python
-
-`g1_graspgen_adapter` and `g1_instruction_grounder` are ZMQ and msgpack clients. The models they
-talk to need torch and CUDA, which this image does not have, so they run on the host and these
-nodes speak their wire protocol, as `g1_vla`'s policy adapter does. The rest of the package is
-C++. They share socket handling with the detector (`canopy_perception/host_clients.py`);
-`g1_perception/host_clients.py` adds the grasp generator's call.
-
-## What the geometry assumes
-
-An object stands on a surface and the camera sees its top. Height runs from that surface to the
-highest visible point, which is what makes one view enough: a sphere's lowest visible point is its
-equator, not its base. Width comes from the visible points only, so a shape hiding its far side
-reads slightly small and slightly close. Anything else inside a mask is measured as the object,
-which is why the tabletop world starts the arms clear of the props.
-
-## Running
-
-With the stand-in detector, which needs no GPU:
+## Watching it work
 
 ```bash
-ros2 launch g1_bringup bringup.launch.py world:=tabletop pin_pelvis:=true \
-  odometry:=ground_truth moveit:=true manipulation:=true perception:=true detector:=mock
+ros2 launch g1_bringup bringup.launch.py world:=conveyor object_tracker:=true object_tracker_rviz:=true
+# or, beside a running tracker:
+rviz2 -d $(ros2 pkg prefix g1_perception)/share/g1_perception/rviz/perception.rviz
+# or just the picture:
+ros2 run rqt_image_view rqt_image_view /g1_object_tracker/debug/image
 ```
 
-Against the real models, after starting the host vision server (`./scripts/setup-vision.sh` once,
-then `./scripts/serve.sh vision`):
+Three views, computed only while something subscribes to them:
+
+| Topic | Shows |
+| --- | --- |
+| `~/debug/image` | The depth image (near bright), and per object: the region it fitted; its model's camera-facing surface at the fitted pose, in the object's colour where the depth confirms it and **red** where the camera sees through it (what rejects a wrong pose); **magenta** fitted points inside the part's box that missed its surface (what lowers the inlier ratio); while searching, every pose being tried, as boxes. A status line per object at the top: `TRACK` / `REJECT` / `SEARCH`, inlier ratio, coverage, violation, points, time. |
+| `~/debug/markers` | In RViz's 3D view: each model's mesh where it was fitted (red when this frame's fit was rejected), a label with its scores, and the search boxes. |
+| `~/debug/points` | The points each fit used, in 3D: object colour on the model, magenta in its box but off it, grey outside it. |
+
+Offline, `icp_bench` writes the same image: `DEBUG_DIR=/tmp/view DEBUG_EVERY=5 icp_bench ...`
+gives `/tmp/view/NNNNN.ppm`.
+
+## How it works
+
+Per frame, per object, in the configured order:
+
+1. **Predict.** The object's pose is kept in `odom` with a constant-velocity model and
+   re-expressed through the camera's TF at the image stamp. The head moves with every step;
+   carried in the camera frame, that motion would look like the part jumping.
+2. **Cut out.** Only the model's projected bounding box is back-projected (about 3000 points),
+   and every point another tracked object explains is removed. This is why the pallet comes
+   first: a panel seated with 2 mm clearance otherwise fits itself to the nest's walls.
+3. **ICP.** Point-to-plane, Huber-weighted, with correspondences from a nearest-neighbour grid
+   precomputed around the model (one array read per point), back-facing surfaces rejected (with
+   a twin lookup across thin walls), and a 12 → 5 mm correspondence gate.
+4. **Verify.** The model's camera-facing surface is compared with the depth image: the share the
+   depth confirms (coverage), and the share where the camera sees *past* it (violation, meaning
+   the part cannot be there). Occlusion counts as neither, so a hand over the part does not fail
+   the check. Five bad frames in a row and the object is searched for again.
+
+**Searching** runs on a worker thread, so one object's search never stalls another's tracking.
+It tries the configured **priors** first: the pallet's station on the line, swept along its
+travel; the four nests relative to the tracked pallet; optionally the hand. Each prior gets a
+wide ICP pass, then a tight one, then verification. After `global_after_s` without a match,
+FPFH + RANSAC over the whole frame runs as well.
+
+## Results
+
+These come from `tools/make_icp_dataset.py` and `icp_bench`. They are head-camera renders of
+the conveyor scene at 848x480 with RealSense-like noise: σ = 0.6 mm + 2.5 mm·z², 1 mm
+quantisation, 2 % dropouts and invalid depth edges. Both parts are tracked together, on a 2-core
+sandbox.
+
+| Sequence | Object | Valid frames | Mean error | Max error | Time per object |
+| --- | --- | --- | --- | --- | --- |
+| static | pallet | 100 % | 0.36 mm / 0.04° | 0.75 mm / 0.09° | 1.5 ms |
+| static | panel in nest 1 | 100 % | 0.36 mm / 0.18° | 0.89 mm / 0.50° | 1.0 ms |
+| head sway + pallet indexing 150 mm | pallet | 100 % | 0.29 mm / 0.04° | 0.82 mm / 0.15° | 1.9 ms |
+| head sway + pallet indexing 150 mm | panel | 100 % | 0.61 mm / 0.24° | 1.69 mm / 0.64° | 1.0 ms |
+| head sway + panel carried and turned | panel | 100 % | 0.56 mm / 0.23° | 2.20 mm / 1.42° | 0.9 ms |
+
+All objects together take 2.4 to 2.8 ms per frame on average, at most 5.8 ms, which is over
+350 fps of tracking budget against a 30 fps camera. Lock-on from the priors takes 3 to 5 frames.
+Model preparation takes about 3 s for the pallet and 1 s for the panel at start-up.
+
+Reproduce:
 
 ```bash
-ros2 launch g1_bringup bringup.launch.py world:=tabletop pin_pelvis:=true \
-  odometry:=ground_truth moveit:=true manipulation:=true perception:=true detector:=vision \
-  phrases:="red block,white cup"
+MUJOCO_GL=egl python3 tools/make_icp_dataset.py <scene.xml> /tmp/icpdata   # needs mujoco, numpy
+icp_bench /tmp/icpdata/sway_index pallet=models/bsh_pallet.stl panel=models/bsh_panel.stl
 ```
 
-`ros2 topic echo --once /objects` shows what is seen. `rviz:=true` adds the annotated image, the
-ground truth and the grasp plan to MoveIt's window; the `visualization` argument behind them
-follows `rviz`. `./scripts/demos/open-vocabulary-grasping.sh mock|vision|graspgen|grounding` opens
-each variant in panes, and the
-[open-vocabulary perception guide](../../../docs/guides/open-vocabulary-grasping.md) covers the
-servers and the grasp and grounding variants.
+## Grasps and slots
 
-## Tests
+Per object, in its output frame (`config/object_tracker_conveyor.yaml`):
 
-`./scripts/manage.sh test g1_perception` skips `test_perception_objects`, which needs `--sim`.
+- `grasps: ["<name> x y z roll pitch yaw"]`: where a hand takes the part.
+- `slots: ["<name> x y z roll pitch yaw"]`: where another part sits on this one, such as the
+  pallet's nests.
 
-| Test | Needs a simulator | Covers |
-|---|---|---|
-| `test_object_geometry` | No | Erosion, deprojection including the NaN and padded-row cases the simulator never produces, the depth gate, and the box fit: a tilted rectangle's yaw, a square that must not inflate, a sphere's height from its support plane, and a mask that ran onto the table. |
-| `test_object_tracker` | No | Ids that survive jitter, a lone object followed past the match radius, a second instance getting its own index, two neighbours that must not swap, index reuse after a timeout, an alias that never jumps between objects, and the phrase recovered from an id. |
-| `test_perception_visualizer` | No | Which drawn instance counts as measured, including a rejected one whose raw label equals an alias. |
-| `test_visualizer` | No | The visualizer on synthetic frames: the annotated image, ground truth moved into `odom` and labelled with the error, an empty frame left untouched, and masks that arrive before their frame. |
-| `test_grounder` | No | The grounder against a stub: an instruction becomes phrases, the target is one of them, the phrases actually reach the detector's parameter, exemplar points survive, and an empty instruction is refused. |
-| `test_graspgen_adapter` | No | The grasp adapter against a stub generator: the request encoding the real server would reject, the frame and stamp of the answer, ordering by confidence, an unknown object, and a left-hand request refused rather than mirrored. |
-| `test_perception_objects` | Yes | Measured poses against the simulator's own for every tabletop prop: position and size, both names published, and the stamp being the measurement's rather than the publisher's. |
+The tracker publishes each one, carried by the tracked pose, in three ways:
+
+- as an extra hypothesis on the detection: `panel/grasp/edge_high`, `pallet/slot/nest_2`;
+- as a TF frame: `tracked/panel/grasp/edge_high`;
+- in RViz (`~/debug/markers`):
+  - a grasp is drawn as a gripper: approach line yellow, fingers red, thumb side blue, palm white,
+    a cyan cross where the hand closes;
+  - a slot is drawn as axes.
+
+`g1_manipulation`'s Pick and Place use them; see its README. The panel's `edge_high` grasp is a
+first guess from the CAD. Check it against the hand in the simulator before relying on it.
+
+## Configuration
+
+See `config/object_tracker_conveyor.yaml`. Poses are one string each:
+`"<frame> x y z [roll pitch yaw]"` (metres, radians, RPY about fixed axes), where `<frame>` is a
+TF frame or another tracked object's name. `prior_sweep: "x 0.0 0.75 0.025"` tries a prior
+every 25 mm along an axis.
+
+Per object, besides the model, priors and offsets:
+
+| Key | What |
+| --- | --- |
+| `instances: N` | Track up to N of this part at once, as `<name>_1` .. `<name>_N`, sharing one loaded model. Pick with `object_id: <name>` takes the nearest. |
+| `region: "<frame> xmin xmax ymin ymax zmin zmax [max_angle_deg [roll pitch yaw]]"` | Where the object can be. A fit outside it is dropped and the object searched for again, never reported. The pallet's keeps it on its line. |
+| `instance_separation` | How close two instances' poses may be (default 0.05 m). |
+| `symmetric_z: true` | The part is round about its own z (a can). Its yaw is reported facing the world frame's +x instead of whatever the fit gave, so its grasps and slots stay put, and the detection carries `<name>/symmetric/z` so a place may turn it freely about that axis. |
+
+**Swapping in scanned models.** Set `<object>.model` to the PLY, with `model_scale: 0.001` if it
+is in millimetres. PLY with faces is best, because normals then come from the faces and
+back-face rejection works. A point-only PLY works too. The priors and `output_offset` are
+written for the model's own frame: if the scan's origin differs from the STL's, re-measure them.
+The easiest way is to let the tracker lock once from a hand-placed prior, then read the
+`tracked/<name>` TF.
+
+**On the robot:**
+
+- The pallet's station prior is a position in `odom`, which is only right while odom starts
+  where the simulator's does. Write it in `map` and run localization.
+- Real D435i depth is 16UC1 in millimetres; `depth_scale: 0.001` handles it.
+- For a panel in the hand, add a prior on the palm frame with the grasp offset.
+
+## Limitations
+
+- **FPFH rarely finds these parts on its own.** The pallet repeats every 150.6 mm and both
+  parts are mostly flat. In tests it never produced a wrong lock, because verification rejects
+  its bad answers. It also never found a part without a prior. Configure priors for every place
+  a part can be.
+- **ICP cannot see sliding along a direction no visible face resists.** A part whose faces
+  across that direction all face away from the camera can settle up to about a centimetre off,
+  and still pass verification. On the line's views this did not happen, but a camera looking
+  straight along a part's length would show it.
+- **Instances share priors, not tracks.** `instances: 4` reports `panel_1` .. `panel_4`. An
+  instance does not search a prior another one already holds, and a fit within
+  `instance_separation` (5 cm) of another instance's part is dropped. With more parts in view than
+  instances, the rest are not reported.
+- **Mirror-symmetric placements are told apart only by asymmetric features.** On the panel these
+  are its windows and clips; a panel flipped 180° in a nest is a separate prior.
+
+## Files
+
+| Path | What |
+| --- | --- |
+| `include/g1_perception/object_model.hpp` | Model loading (STL / PLY), sampling, NN grid (jump flooding), FPFH features. |
+| `include/g1_perception/icp_tracker.hpp` | ICP, scoring, verification, global search, `ObjectTracker`, `ConstantVelocity`. |
+| `include/g1_perception/debug_render.hpp` | The debug image: fits, verdicts and status drawn on the depth. |
+| `rviz/perception.rviz` | RViz on the debug views. |
+| `include/g1_perception/multi_tracker.hpp` | Several objects, order, explained points, priors through frames. What the node runs. |
+| `src/object_tracker_node.cpp` | The ROS node: messages and TF only. |
+| `tools/icp_bench.cpp` | Offline replay and grading against ground truth. |
+| `tools/make_icp_dataset.py` | Renders test sequences from the MuJoCo scene. |
+| `test/test_tracker.cpp` | Synthetic-scene tests of the core. |

@@ -1,10 +1,11 @@
 """Pick and place skills, and the object-pose source they read.
 
-Starts neither the simulator nor move_group; g1_bringup launches both alongside this.
+No simulator and no move_group: both are composed alongside this by g1_bringup, the same way
+nav_stack.launch.py and move_group.launch.py are. Only the object source is simulation-specific,
+and it says so itself -- its `hardware` default refuses to configure.
 """
 
 import os
-from typing import List
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -14,61 +15,56 @@ from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import LifecycleNode, Node
 from launch_ros.event_handlers import OnStateTransition
 from launch_ros.events.lifecycle import ChangeState
-from launch_ros.parameter_descriptions import ParameterValue
 from lifecycle_msgs.msg import Transition
 from moveit_configs_utils import MoveItConfigsBuilder
 
-SHARE = get_package_share_directory("g1_manipulation")
-DESCRIPTION_SHARE = get_package_share_directory("g1_description")
-MOVEIT_SHARE = get_package_share_directory("g1_moveit_config")
 
+def generate_launch_description():
+    manipulation_share = get_package_share_directory("g1_manipulation")
+    description_share = get_package_share_directory("g1_description")
+    moveit_share = get_package_share_directory("g1_moveit_config")
 
-def _config(share, name):
-    return os.path.join(share, "config", name)
-
-
-def _moveit_config():
-    """MoveGroupInterface reads the description, semantics and kinematics from its own node's
-    parameters; without them every plan fails against an empty model, and the error does not
-    say so."""
-    return (
+    # The same assembly move_group.launch.py uses. MoveGroupInterface needs the robot
+    # description, its semantics and the kinematics solvers in its own node's parameters --
+    # without them it constructs against an empty model and every plan fails for a reason
+    # that names neither this file nor the missing parameter.
+    moveit_config = (
         MoveItConfigsBuilder("g1", package_name="g1_moveit_config")
         .robot_description(
-            file_path=os.path.join(DESCRIPTION_SHARE, "urdf", "g1_lowcmd.urdf.xacro")
+            file_path=os.path.join(description_share, "urdf", "g1_arm_sdk.urdf.xacro")
         )
-        .robot_description_semantic(file_path=_config(MOVEIT_SHARE, "g1.srdf"))
-        .robot_description_kinematics(file_path=_config(MOVEIT_SHARE, "kinematics.yaml"))
-        .joint_limits(file_path=_config(MOVEIT_SHARE, "joint_limits.yaml"))
-        # Named, or the builder assembles every pipeline it knows and pilz fails the launch.
+        .robot_description_semantic(file_path=os.path.join(moveit_share, "config", "g1.srdf"))
+        .robot_description_kinematics(
+            file_path=os.path.join(moveit_share, "config", "kinematics.yaml")
+        )
+        .joint_limits(file_path=os.path.join(moveit_share, "config", "joint_limits.yaml"))
+        # Named explicitly for the same reason move_group.launch.py names it: left to itself
+        # the builder assembles every pipeline it knows, and pilz wants a
+        # pilz_cartesian_limits.yaml this config does not ship, which fails the launch.
         .planning_pipelines(pipelines=["ompl"], default_planning_pipeline="ompl")
         .to_moveit_configs()
     )
 
-
-def _object_source():
-    return LifecycleNode(
+    object_source = LifecycleNode(
         package="g1_manipulation",
         executable="g1_object_pose_source",
         name="g1_object_pose_source",
         namespace="",
         output="screen",
         parameters=[
-            _config(SHARE, "g1_object_pose_source.yaml"),
-            {
-                "object_source": LaunchConfiguration("object_source"),
-                "publish_markers": LaunchConfiguration("visualization"),
-            },
+            os.path.join(manipulation_share, "config", "g1_object_pose_source.yaml"),
+            {"object_source": LaunchConfiguration("object_source")},
         ],
         remappings=[
-            # Derived from object_source rather than a second argument, so perception can never
-            # read the simulator's poses.
+            # Ground truth from the relay, or measurements from g1_perception's tracker. Both
+            # are Detection3DArray in the camera frame, so nothing past this node can tell.
             (
                 "~/object_poses",
                 PythonExpression(
                     [
-                        "'/g1_object_geometry/object_poses' if '",
+                        "'/g1_object_tracker/detections' if '",
                         LaunchConfiguration("object_source"),
-                        "' == 'perception' else '/g1_sensor_relay/object_poses'",
+                        "' == 'depth_tracker' else '/g1_sensor_relay/object_poses'",
                     ]
                 ),
             ),
@@ -77,50 +73,39 @@ def _object_source():
         ],
     )
 
-
-def _bring_up(node):
-    """Configures, then activates, through launch events: one node needs no lifecycle manager."""
-
-    def _transition(transition_id):
-        return EmitEvent(
-            event=ChangeState(
-                lifecycle_node_matcher=matches_action(node), transition_id=transition_id
-            )
-        )
-
-    return [
-        RegisterEventHandler(
-            OnStateTransition(
-                target_lifecycle_node=node,
-                goal_state="inactive",
-                entities=[_transition(Transition.TRANSITION_ACTIVATE)],
-            )
-        ),
-        _transition(Transition.TRANSITION_CONFIGURE),
-    ]
-
-
-def generate_launch_description():
-    object_source = _object_source()
-
-    server = Node(
+    manipulation_server = Node(
         package="g1_manipulation",
         executable="g1_manipulation_server",
         name="g1_manipulation_server",
         output="screen",
         parameters=[
-            _moveit_config().to_dict(),
-            _config(SHARE, "g1_manipulation_server.yaml"),
-            {
-                "object_timeout_ms": LaunchConfiguration("object_timeout_ms"),
-                "min_grip_height_m": LaunchConfiguration("min_grip_height_m"),
-                "grasp_source": LaunchConfiguration("grasp_source"),
-                "publish_markers": LaunchConfiguration("visualization"),
-                "graspgen_to_grasp_frame_xyz_rpy": ParameterValue(
-                    LaunchConfiguration("grasp_offset"), value_type=List[float]
-                ),
-            },
+            moveit_config.to_dict(),
+            os.path.join(manipulation_share, "config", "g1_manipulation_server.yaml"),
         ],
+    )
+
+    # Driven by launch event handlers rather than a lifecycle manager, matching how
+    # g1_navigation drives g1_loco_authority: there is one node here, and adding a manager
+    # for it would be more moving parts than the thing it manages.
+    configure = EmitEvent(
+        event=ChangeState(
+            lifecycle_node_matcher=matches_action(object_source),
+            transition_id=Transition.TRANSITION_CONFIGURE,
+        )
+    )
+    activate_on_configured = RegisterEventHandler(
+        OnStateTransition(
+            target_lifecycle_node=object_source,
+            goal_state="inactive",
+            entities=[
+                EmitEvent(
+                    event=ChangeState(
+                        lifecycle_node_matcher=matches_action(object_source),
+                        transition_id=Transition.TRANSITION_ACTIVATE,
+                    )
+                )
+            ],
+        )
     )
 
     return LaunchDescription(
@@ -128,46 +113,16 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "object_source",
                 default_value="sim_ground_truth",
-                description="Where object poses come from. 'sim_ground_truth' reads MuJoCo "
-                "bodies through g1_sensor_relay; 'perception' takes what g1_perception "
-                "measured; 'hardware' refuses to configure, because the robot has no detector "
-                "of its own.",
-            ),
-            DeclareLaunchArgument(
-                "grasp_source",
-                default_value="fixed_top_down",
-                choices=["fixed_top_down", "generated"],
-                description="Where a pick's grasp comes from: the pose this server computes "
-                "from the object's box, or the best candidate a grasp generator offers.",
-            ),
-            DeclareLaunchArgument(
-                "grasp_offset",
-                default_value="[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]",
-                description="The generator's gripper frame to <side>_hand_grasp_frame, xyz then "
-                "rpy, measured for the hand the generator serves. Zero says they coincide, which "
-                "is an assumption until it is measured against the candidates in RViz.",
-            ),
-            DeclareLaunchArgument(
-                "object_timeout_ms",
-                default_value="1000.0",
-                description="How old a pose may be before a skill refuses to act on it. A real "
-                "detector needs seconds here, not the sub-second a simulator stream affords.",
-            ),
-            DeclareLaunchArgument(
-                "min_grip_height_m",
-                default_value="0.080",
-                description="Lowest grip above the surface an object stands on. The thumb hangs "
-                "63 mm below the grasp frame, so lower only where it can hang past the surface's "
-                "edge.",
-            ),
-            DeclareLaunchArgument(
-                "visualization",
-                default_value="false",
-                description="Publishes /object_markers and the manipulation server's grasp_plan "
-                "for RViz. false creates neither publisher.",
+                description=(
+                    "Where object poses come from. 'sim_ground_truth' reads MuJoCo bodies "
+                    "through g1_sensor_relay; 'depth_tracker' reads g1_perception's model-based "
+                    "tracker (start object_tracker.launch.py too); 'hardware' refuses to "
+                    "configure."
+                ),
             ),
             object_source,
+            activate_on_configured,
+            configure,
+            manipulation_server,
         ]
-        + _bring_up(object_source)
-        + [server]
     )

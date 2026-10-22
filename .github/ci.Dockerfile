@@ -1,23 +1,23 @@
-# Build-and-test image for CI, not the development environment: .devcontainer/Dockerfile is too
-# big (19 GB) for a runner to pull. This carries only what the packages link against.
+# Build-and-test image for CI. NOT the development environment -- .devcontainer/Dockerfile is,
+# and at 19 GB a runner cannot pull it. This carries only what the packages link against.
 #
-# No MuJoCo, CUDA, Xvfb or unitree_mujoco, so nothing under `ctest -L simulator` runs here. RViz
-# arrives anyway as a dependency of the moveit and navigation2 metapackages.
+# Absent by design: MuJoCo, CUDA, Xvfb, the unitree_mujoco tree. Anything under
+# `ctest -L simulator` cannot run here. RViz arrives anyway, as a dependency of the moveit and
+# navigation2 metapackages.
 #
-# The version ARGs must match .devcontainer/Dockerfile; ci.yml fails the build if they drift.
-FROM ros:jazzy-ros-base
-
-# Must match .devcontainer/Dockerfile: every `ros-${ROS_DISTRO}-*` apt name below resolves
-# through it.
-ARG ROS_DISTRO=jazzy
+# The version ARGs below must match .devcontainer/Dockerfile; ci.yml fails the build if they
+# drift, because CI on different versions tests a configuration nobody ships.
+FROM ros:humble-ros-base
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 
-# clang-format and clang-tidy change between major versions, so both are pinned to the dev
-# container's or the clang_*_check tests disagree with a local run. liburdfdom-tools provides
-# check_urdf for g1_description's xacro test.
-ARG LLVM_VERSION=18
+# clang-format's output is not stable across major versions, so an unpinned one rejects
+# correctly formatted files. The same pin covers clang-tidy, whose check set and fix-its also
+# move between releases -- and it has to match the dev container's 14, or the clang_tidy_check_*
+# tests disagree with what a developer reproduces locally. liburdfdom-tools is check_urdf, which
+# g1_description's xacro test shells out to.
+ARG LLVM_VERSION=14
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         ccache \
@@ -30,15 +30,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         liburdfdom-tools \
         python3-colcon-common-extensions \
         python3-pip \
+        python3-vcstool \
     && ln -sf /usr/bin/clang-format-${LLVM_VERSION} /usr/bin/clang-format \
     && ln -sf /usr/bin/clang-tidy-${LLVM_VERSION} /usr/bin/clang-tidy \
-    && ln -sf /usr/bin/run-clang-tidy-${LLVM_VERSION} /usr/bin/run-clang-tidy \
     && rm -rf /var/lib/apt/lists/*
 
-# Pinned: ruff's rule set changes between minor versions. --break-system-packages because
-# Ubuntu 24.04 marks the system Python externally managed (PEP 668) and refuses the install.
+# Pinned: ruff's rule set changes between minor versions.
 ARG RUFF_VERSION=0.16.1
-RUN python3 -m pip install --no-cache-dir --break-system-packages ruff==${RUFF_VERSION}
+RUN python3 -m pip install --no-cache-dir ruff==${RUFF_VERSION}
 
 # libboost/libeigen are unitree_sdk2's, PCL is FAST-LIO's.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -53,47 +52,43 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ROS packages the workspace builds against; ros-base carries none of them.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ros-${ROS_DISTRO}-ament-cmake-gmock \
-        ros-${ROS_DISTRO}-ament-cmake-pytest \
-        ros-${ROS_DISTRO}-ament-lint-auto \
-        ros-${ROS_DISTRO}-ament-lint-common \
-        ros-${ROS_DISTRO}-behaviortree-cpp \
-        ros-${ROS_DISTRO}-launch-testing \
-        ros-${ROS_DISTRO}-launch-testing-ament-cmake \
-        ros-${ROS_DISTRO}-moveit \
-        ros-${ROS_DISTRO}-moveit-configs-utils \
-        ros-${ROS_DISTRO}-moveit-ros-perception \
-        ros-${ROS_DISTRO}-moveit-servo \
-        ros-${ROS_DISTRO}-navigation2 \
-        ros-${ROS_DISTRO}-nav2-bringup \
-        ros-${ROS_DISTRO}-pcl-conversions \
-        ros-${ROS_DISTRO}-pcl-ros \
-        ros-${ROS_DISTRO}-pick-ik \
-        ros-${ROS_DISTRO}-pointcloud-to-laserscan \
-        ros-${ROS_DISTRO}-realsense2-description \
-        ros-${ROS_DISTRO}-realtime-tools \
-        ros-${ROS_DISTRO}-ros2-control \
-        ros-${ROS_DISTRO}-ros2-controllers \
-        ros-${ROS_DISTRO}-slam-toolbox \
-        ros-${ROS_DISTRO}-vision-msgs \
-        ros-${ROS_DISTRO}-xacro \
+        ros-humble-ament-cmake-gmock \
+        ros-humble-ament-cmake-pytest \
+        ros-humble-ament-lint-auto \
+        ros-humble-ament-lint-common \
+        ros-humble-behaviortree-cpp \
+        ros-humble-launch-testing \
+        ros-humble-launch-testing-ament-cmake \
+        ros-humble-moveit \
+        ros-humble-moveit-configs-utils \
+        ros-humble-moveit-ros-perception \
+        ros-humble-navigation2 \
+        ros-humble-nav2-bringup \
+        ros-humble-pcl-conversions \
+        ros-humble-pcl-ros \
+        ros-humble-pick-ik \
+        ros-humble-pointcloud-to-laserscan \
+        ros-humble-realsense2-description \
+        ros-humble-realtime-tools \
+        ros-humble-rmw-cyclonedds-cpp \
+        ros-humble-ros2-control \
+        ros-humble-ros2-controllers \
+        ros-humble-rosidl-generator-dds-idl \
+        ros-humble-slam-toolbox \
+        ros-humble-vision-msgs \
+        ros-humble-xacro \
     && rm -rf /var/lib/apt/lists/*
-
-# The policy adapter's runtime deps, mirrored from .devcontainer/Dockerfile.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3-zmq \
-        python3-msgpack \
-    && rm -rf /var/lib/apt/lists/* && \
-    python3 -m pip install --no-cache-dir --no-deps --break-system-packages msgpack-numpy==0.4.8
 
 # behaviortree_cpp 4.9.1 installs under lib/<triplet>/ while its own CMake export looks in
 # lib/, so dependants fail to configure. Guarded so a fixed release keeps its real file.
-RUN test -e /opt/ros/${ROS_DISTRO}/lib/libbehaviortree_cpp.so || \
+RUN test -e /opt/ros/humble/lib/libbehaviortree_cpp.so || \
     ln -s "$(dpkg-architecture -qDEB_HOST_MULTIARCH)/libbehaviortree_cpp.so" \
-          /opt/ros/${ROS_DISTRO}/lib/libbehaviortree_cpp.so
+          /opt/ros/humble/lib/libbehaviortree_cpp.so
 
-# Parallelism for the three source builds below, sized for the GitHub runner: cc1plus takes
-# 0.5-1 GB here, so allow one job per ~2 GB of RAM. Raise with --build-arg BUILD_JOBS=N.
+# Compilation parallelism for the three source builds below. Sized for the GitHub runner that
+# builds this image, not for a workstation: heavy C++ here runs 0.5-1 GB per cc1plus, and the
+# rule that keeps it off the OOM killer is one job per ~2 GB of RAM. Raise with
+# --build-arg BUILD_JOBS=N on a bigger box.
 ARG BUILD_JOBS=3
 
 # --- unitree_sdk2 -------------------------------------------------------------------------
@@ -125,17 +120,13 @@ RUN git init -q /tmp/Livox-SDK2 && \
     rm -rf /tmp/Livox-SDK2
 
 # --- ONNX Runtime -------------------------------------------------------------------------
-# g1_controllers links it to run the balance policy. CPU build only.
+# g1_motion_service_sim links it for the walking policy. CPU build only.
 ARG ONNXRUNTIME_VERSION=1.20.1
 RUN mkdir -p /opt/onnxruntime && \
     curl -fsSL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz" \
       | tar -xz --strip-components=1 -C /opt/onnxruntime && \
     echo /opt/onnxruntime/lib > /etc/ld.so.conf.d/onnxruntime.conf && \
     ldconfig
-
-# Pillow, for canopy's model-server tests that ci.yml runs outside colcon.
-RUN apt-get update && apt-get install -y --no-install-recommends python3-pil \
-    && rm -rf /var/lib/apt/lists/*
 
 # Loopback DDS: a runner binding its real NIC would put a test's rt/lowcmd on GitHub's network.
 RUN mkdir -p /etc/cyclonedds && \
@@ -147,8 +138,7 @@ RUN mkdir -p /etc/cyclonedds && \
       '  </Interfaces></General></Domain>' \
       '</CycloneDDS>' > /etc/cyclonedds/cyclonedds.xml
 
-# RMW_IMPLEMENTATION must match .devcontainer/Dockerfile; ci.yml checks that it does.
-ENV RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 ENV CYCLONEDDS_URI=file:///etc/cyclonedds/cyclonedds.xml
 ENV ROS_DOMAIN_ID=1
 ENV CMAKE_C_COMPILER_LAUNCHER=ccache

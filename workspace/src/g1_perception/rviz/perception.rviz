@@ -1,0 +1,122 @@
+# What the object tracker sees and does.
+#   ros2 launch g1_perception object_tracker.launch.py rviz:=true
+#   ros2 launch g1_bringup bringup.launch.py world:=conveyor object_tracker:=true object_tracker_rviz:=true
+#
+# The tracker computes these views only while something subscribes to them.
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Tracker1
+      Splitter Ratio: 0.5
+    Tree Height: 500
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Name: root
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 0.5
+      Plane Cell Count: 20
+      Color: 160; 160; 164
+      Alpha: 0.3
+      Reference Frame: <Fixed Frame>
+
+    - Class: rviz_default_plugins/RobotModel
+      Name: Robot
+      Enabled: true
+      Description Topic:
+        Value: /robot_description
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Alpha: 0.6
+
+    - Class: rviz_common/Group
+      Name: Tracker
+      Enabled: true
+      Displays:
+        # The depth image with the fits drawn on it: each model's camera-facing surface in the
+        # object's colour where the depth confirms it and red where the camera sees through it,
+        # magenta for fitted points that missed the part, boxes for poses being searched, and a
+        # status line per object.
+        - Class: rviz_default_plugins/Image
+          Name: Tracker view
+          Enabled: true
+          Topic:
+            Value: /g1_object_tracker/debug/image
+            Depth: 1
+            Durability Policy: Volatile
+            Reliability Policy: Reliable
+          Normalize Range: false
+
+        # Each model's mesh where it was fitted (red when this frame's fit was rejected), a
+        # label with its scores, and while searching, the boxes being tried.
+        - Class: rviz_default_plugins/MarkerArray
+          Name: Fitted models
+          Enabled: true
+          Topic:
+            Value: /g1_object_tracker/debug/markers
+            Depth: 1
+            Durability Policy: Volatile
+            Reliability Policy: Reliable
+          Namespaces: {}
+
+        # The points each fit used: object colour on the model, magenta in its box but off it,
+        # grey outside its box.
+        - Class: rviz_default_plugins/PointCloud2
+          Name: Fitted points
+          Enabled: true
+          Topic:
+            Value: /g1_object_tracker/debug/points
+            Depth: 1
+            Durability Policy: Volatile
+            Reliability Policy: Reliable
+          Style: Points
+          Size (Pixels): 3
+          Alpha: 1
+          Decay Time: 0
+          Position Transformer: XYZ
+          Color Transformer: RGB8
+
+        - Class: rviz_default_plugins/TF
+          Name: TF
+          Enabled: false
+          Show Names: true
+          Show Axes: true
+          Show Arrows: false
+          Marker Scale: 0.2
+
+  Global Options:
+    Fixed Frame: odom
+    Background Color: 48; 48; 48
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      # Looking at the conveyor's load station from behind the robot.
+      Distance: 2.2
+      Focal Point:
+        X: 0.3
+        Y: 0.5
+        Z: 0.8
+      Pitch: 0.7
+      Yaw: 3.6
+      Target Frame: <Fixed Frame>
+      Near Clip Distance: 0.01
+Window Geometry:
+  Height: 1000
+  Width: 1600
+  Displays:
+    collapsed: false
+  Views:
+    collapsed: false

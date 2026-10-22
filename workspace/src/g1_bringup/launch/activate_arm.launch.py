@@ -1,4 +1,7 @@
-"""Acquire the arms and hands. Run after sim.launch.py is up (see README)."""
+"""Activate the arm hardware component and controller (see README).
+
+Must run after sim.launch.py is up. Activates G1ArmSdkSystem before
+arm_trajectory_controller (mandatory order in Humble)."""
 
 from launch import LaunchDescription
 from launch.actions import ExecuteProcess

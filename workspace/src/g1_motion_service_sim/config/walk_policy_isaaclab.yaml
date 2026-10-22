@@ -1,0 +1,139 @@
+# IsaacLab-sourced walking policy (unitree_sim_isaaclab's policy.onnx / policy1.onnx,
+# G129_CFG_WITH_DEX1_WHOLEBODY). Alternative to walk_policy.yaml's walker.onnx -- mutually
+# exclusive, see walk_policy_isaaclab.hpp's file comment for the contract and the three open
+# questions this still carries before trusting it with real motion.
+#
+# *** SIM-ONLY, LIKE walk_policy.yaml -- see that file's own banner. ***
+/**:
+  ros__parameters:
+    walk_policy_isaaclab:
+      # Mutually exclusive with walk_policy.enabled. If both are true, setUpWalkPolicy() (the
+      # walker.onnx path) wins and this one is never set up -- see motion_service_sim_node's
+      # constructor. Leave false until built, tested standing still, then tested walking in an
+      # empty sim with someone watching the balance.
+      enabled: false
+
+      onnx_model_path: ""   # -> share/g1_motion_service_sim/policy/policy.onnx
+
+      rate_hz: 50.0
+
+      # Ticks of actuation lag between inference and the applied leg target. 0 matches the
+      # reference script: its DelayBuffer(5, ...) is a 5-deep CAPACITY whose lag starts at 0,
+      # and set_time_lag() is never called. Max 5. A previous version hardcoded 5 (100 ms),
+      # which the policy never saw and which made it chase its own corrections and fall.
+      action_delay_steps: 0
+
+      # Seconds of exactly-zero command after which the policy's observation history and last
+      # action are cleared once, recreating its startup condition. Observed in sim: the policy
+      # stands still from startup, but after a Nav2 goal it sometimes keeps stepping in place at
+      # zero command -- the gait lives in its 10-step history. Re-armed by the next non-zero
+      # command. <= 0 disables it. If the reset itself makes the robot stumble, raise this so
+      # it fires later, once the stepping has had a chance to die down on its own.
+      stand_reset_after_s: 1.0
+
+      # All 29 joints, IsaacLab runtime order -- MEASURED from a live environment dump, not
+      # transcribed from a config file. Also used to size default_joint_pos/vel below.
+      joint_names:
+        - left_hip_pitch_joint       # 0
+        - right_hip_pitch_joint      # 1
+        - waist_yaw_joint            # 2
+        - left_hip_roll_joint        # 3
+        - right_hip_roll_joint       # 4
+        - waist_roll_joint           # 5
+        - left_hip_yaw_joint         # 6
+        - right_hip_yaw_joint        # 7
+        - waist_pitch_joint          # 8
+        - left_knee_joint            # 9
+        - right_knee_joint           # 10
+        - left_shoulder_pitch_joint  # 11
+        - right_shoulder_pitch_joint # 12
+        - left_ankle_pitch_joint     # 13
+        - right_ankle_pitch_joint    # 14
+        - left_shoulder_roll_joint   # 15
+        - right_shoulder_roll_joint  # 16
+        - left_ankle_roll_joint      # 17
+        - right_ankle_roll_joint     # 18
+        - left_shoulder_yaw_joint    # 19
+        - right_shoulder_yaw_joint   # 20
+        - left_elbow_joint           # 21
+        - right_elbow_joint          # 22
+        - left_wrist_roll_joint      # 23
+        - right_wrist_roll_joint     # 24
+        - left_wrist_pitch_joint     # 25
+        - right_wrist_pitch_joint    # 26
+        - left_wrist_yaw_joint       # 27
+        - right_wrist_yaw_joint      # 28
+
+      # MEASURED from a live IsaacLab environment (console dump), radians, joint_names order.
+      # Cross-checked against robots/unitree.py's G129_CFG_WITH_DEX1_WHOLEBODY init_state --
+      # the two agree on every joint named in both.
+      default_joint_pos:
+        [-0.20, -0.20, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.42, 0.42,
+          0.35, 0.35, -0.23, -0.23, 0.18, -0.18, 0.0, 0.0, 0.0, 0.0,
+          0.87, 0.87, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+      # NOT printed by the measurement dump. IsaacLab articulation configs default every
+      # joint's initial velocity to 0 and nothing in the reference script suggests otherwise --
+      # left explicit so a future correction has a line to edit rather than an assumption to
+      # rediscover.
+      default_joint_vel: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                           0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                           0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+      # Indices INTO joint_names above, policy action-output order (hip_pitch, hip_roll,
+      # hip_yaw, knee, ankle_pitch, ankle_roll -- left then right each). Legs only; waist and
+      # arms are never commanded by this policy.
+      leg_action_indices: [0, 1, 3, 4, 6, 7, 9, 10, 13, 14, 17, 18]
+
+      # Indices INTO joint_names above, arm observation order. Read into joint_pos/joint_vel,
+      # never commanded.
+      arm_obs_indices: [11, 15, 19, 21, 23, 25, 27, 12, 16, 20, 22, 24, 26, 28]
+
+      # Single scalar, not a per-joint array: target = default_joint_pos + action * 0.25.
+      action_scale: 0.25
+
+      # command[3] (vx, vy, vyaw, height). CONFIRMED: send_commands_keyboard.py and
+      # send_commands_8bit.py both hardcode default_height = 0.8 as the teleop baseline (crouch
+      # delta added on top, defaulting to 0). NOT confirmed to be the exact quantity the policy
+      # was trained to track at this exact value -- still the first thing to question if the
+      # policy behaves oddly holding a fixed command.
+      #
+      # This is the STANDING height. Measured in MuJoCo with policy.onnx: at 0.8 the robot
+      # stands with nearly straight knees (pelvis ~0.79 m), dead still -- and cannot start a
+      # gait from there; a 0.2 m/s or 0.6 rad/s command moves it a few cm and stops. That was
+      # the "freezes on the first move, walks fine once it gets going" problem.
+      command_height: 0.8
+
+      # The height command while the robot is driven (any non-zero velocity command), and for
+      # walk_command_height_hold_s after the last one, so a brief pause between Nav2 commands
+      # does not send it back up. Measured: at 0.72 every command starts at once (0.2 m/s
+      # forward, 0.5 rad/s turn, 0.2 m/s sideways, backward); 0.75 starts too but turns much
+      # more slowly; 0.70 behaves like 0.72. Standing at 0.72 the robot shuffles a few cm/s,
+      # which is why it is not the standing height. <= 0 disables the switch (fixed
+      # command_height, the old behaviour).
+      walk_command_height: 0.72
+      walk_command_height_hold_s: 1.0
+      # How fast the height command moves between the two, per second. 5.0 = within two ticks.
+      command_height_rate: 5.0
+
+      # Gains to drive the 12 leg joints -- DDS motor order (same 15-wide layout as
+      # walk_policy.yaml's lower_kp/lower_kd: legs 0-11 then waist 12-14), so the existing
+      # MotionServiceSim::selectLowerBodyCommand()/publishTick() path needs no changes at all.
+      # From robots/unitree.py's G129_CFG_WITH_DEX1_WHOLEBODY ImplicitActuatorCfg -- the
+      # "legs" group's hip_yaw/hip_roll/hip_pitch/knee/waist stiffness+damping, and the "feet"
+      # group's ankle stiffness+damping. NOT independently verified that these sim
+      # position-actuator gains transfer 1:1 onto /lowcmd's tau = kp*(q_des-q) + kd*(0-dq) the
+      # way walker.onnx's measurably do (see that policy's own yaml comment) -- this is a
+      # starting point, re-tune against this policy's own step response.
+      # DDS order: L_hip_pitch, L_hip_roll, L_hip_yaw, L_knee, L_ankle_pitch, L_ankle_roll,
+      #            R_hip_pitch, R_hip_roll, R_hip_yaw, R_knee, R_ankle_pitch, R_ankle_roll,
+      #            waist_yaw, waist_roll, waist_pitch (waist held at default, never commanded,
+      #            but selectLowerBodyCommand() still needs gains for it).
+      lower_kp: [200.0, 150.0, 150.0, 200.0, 20.0, 20.0,
+                 200.0, 150.0, 150.0, 200.0, 20.0, 20.0,
+                 200.0, 200.0, 200.0]
+      lower_kd: [5.0, 5.0, 5.0, 5.0, 2.0, 2.0,
+                 5.0, 5.0, 5.0, 5.0, 2.0, 2.0,
+                 5.0, 5.0, 5.0]
+
+      staleness_timeout_ms: 100.0

@@ -1,8 +1,3 @@
-/**
- * @file test_frame_reader.cpp
- * @brief Frame validation against truncated, oversized and malformed byte streams.
- */
-
 #include <gmock/gmock.h>
 
 #include <cstring>
@@ -131,28 +126,6 @@ std::vector<std::uint8_t> makeImuFrame()
     return bytes;
 }
 
-// Same shape as the IMU frame: one fixed-size record of rates, with the pose in the header.
-std::vector<std::uint8_t> makeBaseStateFrame()
-{
-    SensorFrameHeader header{};
-    header.magic          = grove_g1::kSensorFrameMagic;
-    header.version        = grove_g1::kSensorFrameVersion;
-    header.kind           = static_cast<std::uint32_t>(grove_g1::SensorFrameKind::BaseState);
-    header.payload_bytes  = sizeof(grove_g1::BaseStateRecord);
-    header.sim_time_s     = 3.5;
-    header.sensor_quat[0] = 1.0;
-    header.sensor_pos[2]  = 0.73;
-
-    grove_g1::BaseStateRecord sample{};
-    sample.lin_vel[0] = 0.30;
-    sample.ang_vel[2] = -0.15;
-
-    std::vector<std::uint8_t> bytes(sizeof(header) + sizeof(sample));
-    std::memcpy(bytes.data(), &header, sizeof(header));
-    std::memcpy(bytes.data() + sizeof(header), &sample, sizeof(sample));
-    return bytes;
-}
-
 }  // namespace
 
 TEST(FrameReader, ReadsAWholeFrameAndConsumesExactlyIt)
@@ -261,7 +234,7 @@ TEST(WireFormat, TheTwoCopiesOfSensorFrameAreIdentical)
     // The simulator compiles its own copy under workspace/vendor. If they drift, the relay
     // reinterprets bytes and the failure looks like corrupt geometry, not a build problem.
     const char* ours   = "include/g1_sensor_relay/sensor_frame.h";
-    const char* theirs = "../../vendor/unitree_mujoco/simulate/src/sensor_frame.h";
+    const char* theirs = "../../vendor/unitree_mujoco/sensor_frame.h";
 
     std::ifstream a(ours);
     std::ifstream b(theirs);
@@ -273,7 +246,7 @@ TEST(WireFormat, TheTwoCopiesOfSensorFrameAreIdentical)
     sa << a.rdbuf();
     sb << b.rdbuf();
     EXPECT_EQ(sa.str(), sb.str())
-        << "the simulator's sensor_frame.h and the relay's copy have drifted";
+        << "workspace/vendor/unitree_mujoco/sensor_frame.h and the relay's copy have drifted";
 }
 
 TEST(FrameReader, ReadsADepthFrameWithColour)
@@ -336,13 +309,13 @@ TEST(FrameReader, RefusesAnAbsurdImageSizeBeforeAllocating)
 
 TEST(FrameReader, ReadsAnObjectPoseFrame)
 {
-    auto       bytes = makeObjectFrame({ "red_block", "green_cylinder" });
+    auto       bytes = makeObjectFrame({ "red_cube", "green_cylinder" });
     CloudFrame frame;
     ASSERT_EQ(tryReadFrame(bytes, frame), FrameStatus::kOk);
 
     EXPECT_EQ(frame.kind, FrameKind::kObjectPoses);
     ASSERT_EQ(frame.objects.size(), 2U);
-    EXPECT_STREQ(frame.objects[0].name, "red_block");
+    EXPECT_STREQ(frame.objects[0].name, "red_cube");
     EXPECT_STREQ(frame.objects[1].name, "green_cylinder");
     EXPECT_DOUBLE_EQ(frame.objects[1].pos[0], 2.0);
     EXPECT_DOUBLE_EQ(frame.objects[0].quat[0], 1.0);
@@ -355,7 +328,7 @@ TEST(FrameReader, ReadsAnObjectPoseFrame)
 
 TEST(FrameReader, RefusesAnObjectPayloadThatIsNotAWholeNumberOfRecords)
 {
-    auto              bytes = makeObjectFrame({ "red_block" });
+    auto              bytes = makeObjectFrame({ "red_cube" });
     SensorFrameHeader header{};
     std::memcpy(&header, bytes.data(), sizeof(header));
     header.payload_bytes -= 1;
@@ -368,7 +341,7 @@ TEST(FrameReader, RefusesAnObjectPayloadThatIsNotAWholeNumberOfRecords)
 
 TEST(FrameReader, RefusesAnAbsurdObjectCountBeforeAllocating)
 {
-    auto              bytes = makeObjectFrame({ "red_block" });
+    auto              bytes = makeObjectFrame({ "red_cube" });
     SensorFrameHeader header{};
     std::memcpy(&header, bytes.data(), sizeof(header));
     header.payload_bytes =
@@ -383,7 +356,7 @@ TEST(FrameReader, TerminatesAnObjectNameThatArrivesUnterminated)
 {
     // A producer that filled all 32 bytes would otherwise leave the name running into the
     // pose that follows it, and the relay copies that name straight into a message field.
-    auto bytes = makeObjectFrame({ "red_block" });
+    auto bytes = makeObjectFrame({ "red_cube" });
     std::memset(
         bytes.data() + sizeof(SensorFrameHeader),
         'x',
@@ -416,36 +389,6 @@ TEST(FrameReader, ReadsAnImuFrame)
 TEST(FrameReader, RefusesAnImuPayloadOfTheWrongSize)
 {
     auto              bytes = makeImuFrame();
-    SensorFrameHeader header{};
-    std::memcpy(&header, bytes.data(), sizeof(header));
-    header.payload_bytes += 8;
-    std::memcpy(bytes.data(), &header, sizeof(header));
-    bytes.resize(bytes.size() + 8);
-
-    CloudFrame frame;
-    EXPECT_EQ(tryReadFrame(bytes, frame), FrameStatus::kBadLength);
-}
-
-TEST(FrameReader, ReadsABaseStateFrame)
-{
-    auto       bytes = makeBaseStateFrame();
-    CloudFrame frame;
-    ASSERT_EQ(tryReadFrame(bytes, frame), FrameStatus::kOk);
-
-    EXPECT_EQ(frame.kind, FrameKind::kBaseState);
-    EXPECT_DOUBLE_EQ(frame.base.lin_vel[0], 0.30);
-    EXPECT_DOUBLE_EQ(frame.base.ang_vel[2], -0.15);
-    EXPECT_DOUBLE_EQ(frame.sensor_pos[2], 0.73);
-    EXPECT_DOUBLE_EQ(frame.sensor_quat[0], 1.0);
-    EXPECT_TRUE(frame.points.empty());
-    EXPECT_TRUE(frame.depth.empty());
-    EXPECT_TRUE(frame.objects.empty());
-    EXPECT_TRUE(bytes.empty());
-}
-
-TEST(FrameReader, RefusesABaseStatePayloadOfTheWrongSize)
-{
-    auto              bytes = makeBaseStateFrame();
     SensorFrameHeader header{};
     std::memcpy(&header, bytes.data(), sizeof(header));
     header.payload_bytes += 8;

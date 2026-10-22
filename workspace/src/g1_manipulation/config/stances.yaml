@@ -1,0 +1,14 @@
+# Named stances for scripts/go_to_stance.py: where base_footprint stands (x, y, m) and which way
+# it faces (yaw_deg, about z from the frame's +x), in `frame`. Stances saved with
+# `go_to_stance.py --save NAME` go to ~/.ros/g1_stances.yaml and take precedence over these.
+#
+# In the simulator with odometry:=sportmodestate (the default), odom is the MuJoCo world, so these
+# are world coordinates of the scene.
+stances:
+  # conveyor_flat, the first panel (part_tray_1 at rest at 1.595, -0.800, its edge grasp at
+  # 1.55, -0.915): checked against move_group with the full collision model (KDL, the real
+  # meshes) over a grid of stances, the band where the pick went through in two hands every time
+  # is the pelvis 0.47 m behind the grasp, facing 0 to +10 degrees, anywhere from y -0.90 to -0.70.
+  # Its middle: 32 cm back from the table's edge. 4 cm nearer or further back it was hit and miss
+  # (the arm folds into the torso at the scoop's start nearer; out of reach further).
+  panel_1: {x: 1.08, y: -0.80, yaw_deg: 5.0, frame: odom}

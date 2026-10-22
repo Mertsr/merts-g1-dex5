@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""Releases the G1 hand and arms, the reverse of activate_arm.
+"""Releases control authority over the G1 arm bridge, in the mandatory order.
 
-The arms cannot simply be let go: a joint the component sees unclaimed is left unpowered, so
-arm_freeze_controller comes back in the same switch that takes arm_trajectory_controller out.
+Reverse of activate_arm: deactivates arm_trajectory_controller *before*
+G1ArmSdkSystem, so an active controller never claims interfaces out from
+under a deactivating component. The component's own on_deactivate runs its
+ramp-down synchronously and blocks the service call for roughly
+blend_ramp_down_s -- that's by design (see g1_hardware_interface's README),
+not a timeout to work around, so this script's service-call timeout is set
+comfortably longer than the configured ramp.
 
-Python for the same reason as activate_arm: one-shot sequencing, not a control loop.
+Python for the same reason as activate_arm: one-shot administrative
+sequencing, not a control loop.
 """
 
 import sys
@@ -14,13 +20,23 @@ from controller_manager_msgs.srv import SetHardwareComponentState, SwitchControl
 from lifecycle_msgs.msg import State
 from rclpy.node import Node
 
+COMPONENT_NAME = "G1ArmSdkSystem"
 CONTROLLER_NAME = "arm_trajectory_controller"
-ARM_FREEZE_CONTROLLER = "arm_freeze_controller"
 SERVICE_CALL_TIMEOUT_S = 5.0
 
-# Released first and best-effort: a hand that never came up must not block the arm's release.
-# Left Dex5 only, as in activate_arm.
-HANDS = (("G1Dex5SystemLeft", "left_hand_controller"),)
+# Released before the arm and best-effort, mirroring activate_arm: a hand that never came up
+# must not stand between the arm and its ramp-down, which is the release that matters.
+HANDS = (
+    ("G1HandSystemLeft", "left_hand_controller"),
+    ("G1HandSystemRight", "right_hand_controller"),
+)
+
+# Must comfortably exceed blend_ramp_down_s (2.0 s default): on_deactivate
+# blocks the whole service call for the ramp's duration by design (see
+# g1_hardware_interface's README -- resource_manager serializes lifecycle
+# transitions against read()/write(), so the ramp-down runs synchronously
+# inside this call).
+COMPONENT_DEACTIVATE_TIMEOUT_S = 10.0
 
 
 def switch_controller(node, client, activate, deactivate, timeout_s):
@@ -57,7 +73,7 @@ def set_component_state(node, client, name, target_state_id, target_label, timeo
     return result is not None and result.ok
 
 
-def main(argv=None):
+def main():
     rclpy.init()
     node = Node("g1_bringup_deactivate_arm")
     try:
@@ -80,19 +96,30 @@ def main(argv=None):
                 SERVICE_CALL_TIMEOUT_S,
             )
 
-        # The freeze goes back in the same switch, so the arms are never momentarily unowned.
+        # Controller-then-component: see this script's module docstring.
         node.get_logger().info(f"deactivating controller {CONTROLLER_NAME}...")
         if not switch_controller(
-            node,
-            controller_client,
-            [ARM_FREEZE_CONTROLLER],
-            [CONTROLLER_NAME],
-            SERVICE_CALL_TIMEOUT_S,
+            node, controller_client, [], [CONTROLLER_NAME], SERVICE_CALL_TIMEOUT_S
         ):
             node.get_logger().error(f"failed to deactivate {CONTROLLER_NAME}")
             return 1
 
-        node.get_logger().info(f"release complete: the arms are back on {ARM_FREEZE_CONTROLLER}.")
+        node.get_logger().info(
+            f"deactivating hardware component {COMPONENT_NAME} "
+            "(blocks for the ramp-down by design)..."
+        )
+        if not set_component_state(
+            node,
+            component_client,
+            COMPONENT_NAME,
+            State.PRIMARY_STATE_INACTIVE,
+            "inactive",
+            COMPONENT_DEACTIVATE_TIMEOUT_S,
+        ):
+            node.get_logger().error(f"failed to deactivate {COMPONENT_NAME}")
+            return 1
+
+        node.get_logger().info("deactivation complete: controller and component both inactive.")
         return 0
     finally:
         node.destroy_node()

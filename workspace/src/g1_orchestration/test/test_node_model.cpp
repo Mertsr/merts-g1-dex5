@@ -2,7 +2,8 @@
  * @file test_node_model.cpp
  * @brief The checked-in Groot2 palette still matches what the code registers.
  *
- * A stale palette offers tree authors ports and leaves that no longer exist.
+ * Groot2 offers a tree author whatever the model file says, so a stale one invites trees that
+ * cannot load: a port renamed in C++ would keep appearing in the editor under its old name.
  */
 
 #include <behaviortree_cpp/bt_factory.h>
@@ -40,7 +41,7 @@ TEST(NodeModel, TheCheckedInPaletteMatchesTheRegisteredNodes)
 
 int main(int argc, char** argv)
 {
-    // No other thread exists yet.
+    // Before any node or thread exists, so the thread-safety this warns about does not apply.
     // NOLINTNEXTLINE(concurrency-mt-unsafe)
     setenv("ROS_DOMAIN_ID", "79", 1);
     ::testing::InitGoogleMock(&argc, argv);

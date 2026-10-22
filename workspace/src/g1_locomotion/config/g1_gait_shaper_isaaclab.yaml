@@ -1,0 +1,37 @@
+# g1_gait_shaper profile for the unitree_sim_isaaclab-trained policy (walk_policy:=isaaclab).
+# Selected by g1_navigation's nav2.launch.py when walk_policy:=isaaclab; g1_gait_shaper.yaml
+# stays the walker.onnx profile.
+#
+# *** SIM BRING-UP VALUES, NOT HARDWARE-SAFE DEFAULTS -- same standing as g1_gait_shaper.yaml. ***
+#
+# Why the engage thresholds are near zero here: g1_gait_shaper.yaml's 0.45 m/s / 1.20 rad/s are
+# walker.onnx's MEASURED dead zone -- below them that policy does not step at all, so passing a
+# smaller command through would only make it stand still. This policy has no such dead zone: it
+# tracks slow commands, which is the whole reason it replaced walker.onnx. Keeping walker's
+# thresholds in front of it forced every command to be either a stop or at least 0.45 m/s, and
+# the 0.45 -> 0 step at the end of each Nav2 goal kicked the policy into a stepping-in-place
+# rhythm it often did not leave. Tried in sim with these values: most Nav2 goals now end
+# standing; the remaining cases are handled by motion_service_sim's stand reset
+# (walk_policy_isaaclab.stand_reset_after_s).
+#
+# The thresholds still exist (rather than 0.0) so planner jitter around zero -- the last few
+# centimetres of a goal approach, a residual yaw from the rotation shim -- reads as a stop
+# instead of a gait that never settles. They are NOT measured on this policy; if it creeps at
+# the end of a goal, raise them before touching anything else.
+g1_gait_shaper:
+  ros__parameters:
+    # Combine axes instead of picking one primitive. Exclusive mode made every heading
+    # correction from RPP above yaw_engage a stop-and-turn, so the robot walked in a
+    # stop/turn/drive stutter. This policy tracks mixed commands; a curve reaches it as a curve.
+    blend: true
+    fwd_engage: 0.05
+    # Same reasoning as g1_gait_shaper.yaml's rev_engage, minus the measured dead zone: a
+    # planner's backup speeds now get through. Raise this back towards 0.55 if a recovery
+    # behaviour is seen lurching backwards.
+    rev_engage: 0.05
+    yaw_engage: 0.10
+    # Unchanged from g1_gait_shaper.yaml: equals g1_loco_bridge.yaml's max_velocity[2].
+    yaw_clamp: 1.57
+    lat_engage: 0.05
+    # Unchanged: equals g1_loco_bridge.yaml's max_velocity[1].
+    lat_clamp: 0.50

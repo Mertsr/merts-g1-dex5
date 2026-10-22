@@ -1,0 +1,7 @@
+# Overlay on nav2_params.yaml for walk_policy:=walker (and none). Deliberately empty of
+# overrides: nav2_params.yaml is already tuned for walker.onnx. It exists so nav2.launch.py can
+# always pass a profile file; the entry below names no real node, so every server ignores it.
+# See nav2_profile_isaaclab.yaml for the profile that does change something.
+g1_nav2_profile_walker_placeholder:
+  ros__parameters:
+    unused: true

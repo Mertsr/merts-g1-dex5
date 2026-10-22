@@ -1,8 +1,3 @@
-/**
- * @file test_odom_math.cpp
- * @brief The frame, staleness and source-parsing math, with no node or graph.
- */
-
 #include <gmock/gmock.h>
 
 #include <cmath>
@@ -35,8 +30,8 @@ constexpr double kTol = 1e-12;
 TEST(ParseOdometrySource, AcceptsEveryKnownName)
 {
     OdometrySource source = OdometrySource::kHardware;
-    ASSERT_TRUE(parseOdometrySource("ground_truth", source));
-    EXPECT_EQ(source, OdometrySource::kGroundTruth);
+    ASSERT_TRUE(parseOdometrySource("sim_sportmodestate", source));
+    EXPECT_EQ(source, OdometrySource::kSimSportModeState);
 
     ASSERT_TRUE(parseOdometrySource("fast_lio", source));
     EXPECT_EQ(source, OdometrySource::kFastLio);
@@ -47,26 +42,28 @@ TEST(ParseOdometrySource, AcceptsEveryKnownName)
 
 TEST(ParseOdometrySource, RejectsAnythingElseAndLeavesTheOutputAlone)
 {
-    // A typo or a retired source name must fail, not fall back to a working source.
-    OdometrySource source = OdometrySource::kGroundTruth;
+    // A typo must not silently become a working source, which would fabricate transforms.
+    // sim_ground_truth is in the list because it named a source this node no longer has: a
+    // stale config still naming it has to fail rather than quietly pick something else.
+    OdometrySource source = OdometrySource::kSimSportModeState;
     for (const char* name : { "",
                               "sim",
                               "sim_ground_truth",
-                              "sim_sportmodestate",
-                              "GROUND_TRUTH",
+                              "SIM_SPORTMODESTATE",
+                              "ground_truth",
                               "hardware ",
                               "fastlio",
                               "sportmodestate",
                               "sim_sportmode" })
     {
         EXPECT_FALSE(parseOdometrySource(name, source)) << "accepted " << name;
-        EXPECT_EQ(source, OdometrySource::kGroundTruth);
+        EXPECT_EQ(source, OdometrySource::kSimSportModeState);
     }
 }
 
 TEST(YawQuaternion, RoundTripsOverTheFullCircle)
 {
-    for (int i = 0; -M_PI + 1e-6 + i * 0.1 < M_PI; ++i)
+    for (int i = 0; - M_PI + 1e-6 + i * 0.1 < M_PI; ++i)
     {
         const double yaw = -M_PI + 1e-6 + i * 0.1;
         EXPECT_NEAR(quaternionToYaw(yawToQuaternion(yaw)), yaw, 1e-9) << "yaw " << yaw;
@@ -102,6 +99,7 @@ TEST(WrapAngle, MapsOntoTheHalfOpenInterval)
     EXPECT_NEAR(wrapAngle(2.0 * M_PI + 0.25), 0.25, 1e-12);
     EXPECT_NEAR(wrapAngle(-2.0 * M_PI - 0.25), -0.25, 1e-12);
 
+    // The yaw hinge is continuous, so many turns is the realistic input.
     EXPECT_NEAR(wrapAngle(20.0 * M_PI + 0.5), 0.5, 1e-9);
 }
 
@@ -133,7 +131,7 @@ TEST(ToBodyTwist, PreservesSpeedAndYawRate)
 {
     const PlanarTwist world{ 0.3, -0.7, 0.9 };
     const double      world_speed = std::hypot(world.vx, world.vy);
-    for (int i = 0; -3.0 + i * 0.37 < 3.0; ++i)
+    for (int i = 0; - 3.0 + i * 0.37 < 3.0; ++i)
     {
         const double      yaw  = -3.0 + i * 0.37;
         const PlanarTwist body = toBodyTwist(world, yaw);
@@ -157,7 +155,7 @@ TEST(IsStale, NonPositiveTimeoutDisablesTheCheck)
 
 namespace
 {
-/// Roll-pitch-yaw to quaternion, ZYX order: the convention quaternionToYaw()
+/// Roll-pitch-yaw to quaternion, ZYX order -- the convention quaternionToYaw()
 /// inverts.
 Quaternion rpyToQuaternion(double roll, double pitch, double yaw)
 {
@@ -189,8 +187,10 @@ Quaternion multiply(const Quaternion& a, const Quaternion& b)
 
 TEST(QuaternionToYaw, IgnoresRollAndPitch)
 {
-    // A few degrees of pitch under a real heading; 2*atan2(z, w) is exact only at zero tilt.
-    for (int i = 0; -3.0 + i * 0.41 < 3.0; ++i)
+    // The measured standing attitude on the converged track: a few degrees of
+    // pitch under a real heading. The old 2*atan2(z, w) form was exact only at
+    // zero tilt.
+    for (int i = 0; - 3.0 + i * 0.41 < 3.0; ++i)
     {
         const double     yaw = -3.0 + i * 0.41;
         const Quaternion q   = rpyToQuaternion(0.0, 0.0794, yaw);
@@ -225,13 +225,13 @@ TEST(SplitGroundProjection, FootprintIsGravityAlignedAndTheOffsetIsPurelyVertica
 
 TEST(SplitGroundProjection, RecomposesToTheOriginalPose)
 {
-    for (int ir = 0; -0.4 + ir * 0.19 <= 0.4; ++ir)
+    for (int ir = 0; - 0.4 + ir * 0.19 <= 0.4; ++ir)
     {
         const double roll = -0.4 + ir * 0.19;
-        for (int ip = 0; -0.4 + ip * 0.19 <= 0.4; ++ip)
+        for (int ip = 0; - 0.4 + ip * 0.19 <= 0.4; ++ip)
         {
             const double pitch = -0.4 + ip * 0.19;
-            for (int iy = 0; -3.0 + iy * 0.91 < 3.0; ++iy)
+            for (int iy = 0; - 3.0 + iy * 0.91 < 3.0; ++iy)
             {
                 const double      yaw = -3.0 + iy * 0.91;
                 const Quaternion  q   = rpyToQuaternion(roll, pitch, yaw);
@@ -253,7 +253,9 @@ TEST(SplitGroundProjection, RecomposesToTheOriginalPose)
 
 TEST(SplitGroundProjection, HonoursAHeldHeading)
 {
-    // Mid-fall the node holds the last good yaw, so the split projects about the yaw it is given.
+    // Mid-fall the node keeps the last well-conditioned yaw rather than the
+    // current one, so the split has to project about what it is given, not about
+    // the quaternion.
     const Quaternion  q     = rpyToQuaternion(0.0, 0.2, 1.0);
     const GroundSplit split = splitGroundProjection(0.0, 0.0, 0.5, q, 0.25);
     EXPECT_DOUBLE_EQ(split.footprint.yaw, 0.25);
@@ -288,7 +290,8 @@ void expectSamePose(const Pose3d& actual, const Pose3d& expected, double toleran
     EXPECT_NEAR(actual.x, expected.x, tolerance);
     EXPECT_NEAR(actual.y, expected.y, tolerance);
     EXPECT_NEAR(actual.z, expected.z, tolerance);
-    // Sign-insensitive: q and -q are the same rotation.
+    // Sign-insensitive: q and -q are the same rotation, and composePose is free to return
+    // either. Comparing components directly makes this test fail on an equivalent answer.
     const double dot = std::abs(
         actual.q.x * expected.q.x + actual.q.y * expected.q.y + actual.q.z * expected.q.z +
         actual.q.w * expected.q.w);
@@ -346,7 +349,9 @@ TEST(IsUsablePose, AcceptsAnOrdinaryPose)
 
 TEST(IsUsablePose, RejectsWhatADivergedScanMatchProduces)
 {
-    // A diverged FAST-LIO reports NaN, and at the origin latch one bad sample is permanent.
+    // FAST-LIO reports NaN rather than failing when its filter diverges. tf2 would normalise
+    // the result to NaN and drop the transform without naming a source, and at the origin
+    // latch a single one of these would be permanent.
     const double nan = std::numeric_limits<double>::quiet_NaN();
     const double inf = std::numeric_limits<double>::infinity();
 

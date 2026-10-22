@@ -1,8 +1,3 @@
-/**
- * @file registration.cpp
- * @brief The one list binding every leaf class to the name a tree XML uses for it.
- */
-
 #include "g1_orchestration/registration.hpp"
 
 #include <behaviortree_cpp/xml_parsing.h>
@@ -13,44 +8,27 @@
 #include "g1_orchestration/skills/arm_authority_leaves.hpp"
 #include "g1_orchestration/skills/clear_costmaps.hpp"
 #include "g1_orchestration/skills/clear_octomap.hpp"
-#include "g1_orchestration/skills/grasp.hpp"
-#include "g1_orchestration/skills/look_for.hpp"
-#include "g1_orchestration/skills/motion_leaves.hpp"
 #include "g1_orchestration/skills/navigate_to_pose.hpp"
 #include "g1_orchestration/skills/pick.hpp"
 #include "g1_orchestration/skills/place.hpp"
 #include "g1_orchestration/skills/retreat.hpp"
 #include "g1_orchestration/skills/set_arm_posture.hpp"
-#include "g1_orchestration/skills/step_clear.hpp"
-#include "g1_orchestration/skills/world_model_leaves.hpp"
 
 namespace g1_orchestration
 {
 
 void registerSkillNodes(BT::BehaviorTreeFactory& factory, const RosContext& context)
 {
-    registerLeaf<LookFor>(factory, "LookFor", context);
-    registerLeaf<StopLooking>(factory, "StopLooking", context);
     registerLeaf<NavigateToPose>(factory, "NavigateToPose", context);
     registerLeaf<ApproachObject>(factory, "ApproachObject", context);
     registerLeaf<Retreat>(factory, "Retreat", context);
-    registerLeaf<StepClear>(factory, "StepClear", context);
     registerLeaf<Pick>(factory, "Pick", context);
     registerLeaf<Place>(factory, "Place", context);
-    registerLeaf<Grasp>(factory, "Grasp", context);
     registerLeaf<SetArmPosture>(factory, "SetArmPosture", context);
     registerLeaf<ClearCostmaps>(factory, "ClearCostmaps", context);
     registerLeaf<ClearOctomap>(factory, "ClearOctomap", context);
     registerLeaf<AcquireArm>(factory, "AcquireArm", context);
     registerLeaf<ReleaseArm>(factory, "ReleaseArm", context);
-    registerLeaf<NextViewpoint>(factory, "NextViewpoint", context);
-    registerLeaf<ReportViewpoint>(factory, "ReportViewpoint", context);
-    registerLeaf<ResolveTarget>(factory, "ResolveTarget", context);
-    registerLeaf<SaveWorld>(factory, "SaveWorld", context);
-    registerLeaf<CleanUpWorld>(factory, "CleanUpWorld", context);
-    registerLeaf<TurnTo>(factory, "TurnTo", context);
-    registerLeaf<DriveStraight>(factory, "DriveStraight", context);
-    registerLeaf<TurnBy>(factory, "TurnBy", context);
 }
 
 std::string nodeModelXml(const BT::BehaviorTreeFactory& factory)

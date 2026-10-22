@@ -1,8 +1,3 @@
-/**
- * @file odom_math.cpp
- * @brief Frame and staleness math for the odom -> base publisher.
- */
-
 #include "g1_state_estimation/odom_math.hpp"
 
 #include <algorithm>
@@ -14,9 +9,9 @@ namespace g1_state_estimation
 
 bool parseOdometrySource(const std::string& name, OdometrySource& out)
 {
-    if (name == "ground_truth")
+    if (name == "sim_sportmodestate")
     {
-        out = OdometrySource::kGroundTruth;
+        out = OdometrySource::kSimSportModeState;
         return true;
     }
     if (name == "fast_lio")
@@ -58,7 +53,8 @@ Quaternion multiply(const Quaternion& a, const Quaternion& b)
 /// q * (0, v) * q^-1, for a unit q.
 void rotate(const Quaternion& q, double& x, double& y, double& z)
 {
-    // v' = v + w t + q_vec x t, with t = 2 (q_vec x v).
+    // t = 2 * (q_vec x v), then v' = v + q.w * t + q_vec x t. Two cross products rather than
+    // building a matrix: fewer operations and no intermediate to keep consistent.
     const double tx = 2.0 * (q.y * z - q.z * y);
     const double ty = 2.0 * (q.z * x - q.x * z);
     const double tz = 2.0 * (q.x * y - q.y * x);
@@ -124,7 +120,9 @@ GroundSplit splitGroundProjection(double x, double y, double z, const Quaternion
     out.footprint.x   = x;
     out.footprint.y   = y;
     out.footprint.yaw = yaw;
-    // Not a rotated offset: the footprint sits directly beneath the body, so only z remains.
+    // Not a rotated offset: the footprint sits directly beneath the body by construction, so
+    // inverting it leaves exactly (0, 0, z). Asserted in test because it reads like a missing
+    // term.
     out.child_z = z;
 
     // Rz(-yaw) * q. A pure -z left operand collapses the Hamilton product to these four terms.
@@ -160,7 +158,9 @@ Quaternion slerp(const Quaternion& from, const Quaternion& to, double t)
         dot = -dot;
     }
 
-    // Near-parallel, sin(theta) -> 0. Lerp is accurate there, and it is the common case.
+    // Near-parallel: sin(theta) underflows and the general form divides by ~0. Straight lerp
+    // is accurate to well past what matters here, and this is the common case -- the
+    // correction being interpolated is a fraction of a degree.
     double scale_from = 1.0 - t;
     double scale_to   = t;
     if (dot < 0.9995)
@@ -185,7 +185,8 @@ Quaternion slerp(const Quaternion& from, const Quaternion& to, double t)
 
 double wrapAngle(double angle)
 {
-    // remainder() gives [-pi, pi]; -pi maps to +pi so each angle has one representation.
+    // remainder() lands in [-pi, pi]; the shift moves the -pi endpoint up so the interval
+    // is half-open and a given rotation has exactly one representation.
     const double wrapped = std::remainder(angle, 2.0 * M_PI);
     return (wrapped <= -M_PI) ? wrapped + 2.0 * M_PI : wrapped;
 }

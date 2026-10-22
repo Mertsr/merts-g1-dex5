@@ -3,78 +3,45 @@
 
 /**
  * @file ros_action_node.hpp
- * @brief Base for BT leaves that drive one ROS action without blocking a tick.
+ * @brief The one pattern every action leaf in this package uses.
  *
- * Hand-rolled because BehaviorTree.ROS2 is not in this image. Halting cancels the goal, so a
- * halted skill does not leave an arm mid-trajectory. The tree ticks on one thread and the
- * executor runs the client callbacks on another; only `result_` is shared, under `mutex_`.
+ * Hand-rolled rather than taken from BehaviorTree.ROS2: `btcpp_ros2` is not released for
+ * Humble, and vendoring that repo to get four leaves is more to carry than the ~100 lines it
+ * would replace.
+ *
+ * The shape is forced by how a behavior tree ticks. A tick must return promptly, so the leaf
+ * cannot block on an action: it sends the goal on the first tick, answers RUNNING while the
+ * goal is in flight, and reports the outcome on whichever tick sees the result. A halted leaf
+ * cancels rather than abandoning the goal -- an arm left executing a trajectory the tree has
+ * moved on from is exactly the "released cleanly on success or failure" rule in
+ * the control-mode rules being broken.
  */
 
 #include <behaviortree_cpp/action_node.h>
 
-#include <algorithm>
-#include <atomic>
 #include <chrono>
-#include <format>
-#include <future>
 #include <memory>
-#include <mutex>
-#include <optional>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <string>
-#include <utility>
-
-#include "g1_orchestration/leaf_report.hpp"
 
 namespace g1_orchestration
 {
 
-/**
- * @brief What every leaf here needs from the tree.
- */
+/// What every leaf here needs from the tree: the node it borrows for its client.
 struct RosContext
 {
     rclcpp::Node::SharedPtr node;
-    /// True while the mission has to wind down (a stop, a cancel, the watchdog). A leaf that would
-    /// start something then fails at once, so a tick that loops through retries and waits comes to
-    /// an end. Null in a tree that runs without an executor around it.
-    const std::atomic<bool>* stop = nullptr;
 };
-
-/// Whether a leaf should refuse to start what it is about to: the mission is winding down.
-inline bool windingDown(const std::atomic<bool>* stop) { return stop != nullptr && stop->load(); }
-
-/**
- * @brief How a goal ended, in words, for a leaf's failure text.
- *
- * @param code The result code of a finished goal.
- */
-inline std::string describeResultCode(rclcpp_action::ResultCode code)
-{
-    switch (code)
-    {
-        case rclcpp_action::ResultCode::SUCCEEDED:
-            return "the goal succeeded";
-        case rclcpp_action::ResultCode::ABORTED:
-            return "the server aborted the goal";
-        case rclcpp_action::ResultCode::CANCELED:
-            return "the goal was cancelled";
-        case rclcpp_action::ResultCode::UNKNOWN:
-            break;
-    }
-    return "the goal ended in an unknown state";
-}
 
 /**
  * @brief A BT leaf wrapping one ROS action client.
  *
- * Derived classes supply the action name, fillGoal() and judgeResult().
- *
- * @tparam ActionT The ROS action this leaf drives.
+ * Derived classes supply the action name, fill the goal, and judge the result. Everything
+ * about goal handling, cancellation and timeouts lives here.
  */
 template <typename ActionT>
-class RosActionNode : public BT::StatefulActionNode, public LeafReport
+class RosActionNode : public BT::StatefulActionNode
 {
 public:
     using Goal          = typename ActionT::Goal;
@@ -86,18 +53,12 @@ public:
         std::string action_name)
       : BT::StatefulActionNode(instance_name, config)
       , node_(std::move(context.node))
-      , stop_(context.stop)
       , action_name_(std::move(action_name))
     {
         client_ = rclcpp_action::create_client<ActionT>(node_, action_name_);
     }
 
-    /**
-     * @brief Ports every action leaf shares.
-     *
-     * @param extra The derived leaf's own ports.
-     * @return @p extra with the shared ports added.
-     */
+    /// Ports every action leaf shares. Derived classes append their own to this.
     static BT::PortsList providedBasicPorts(BT::PortsList extra)
     {
         extra.insert(BT::InputPort<double>(
@@ -107,102 +68,44 @@ public:
         return extra;
     }
 
-    [[nodiscard]] std::string actionServer() const override { return action_name_; }
-
 protected:
-    /**
-     * @brief Fills the goal from the leaf's ports.
-     *
-     * @param goal Goal to populate.
-     * @return False to fail the leaf before any goal is sent, e.g. on a malformed port.
-     */
+    /// False to fail the leaf before any goal is sent, e.g. on a malformed port.
     virtual bool fillGoal(Goal& goal) = 0;
 
-    /**
-     * @brief Turns a finished goal into a node status.
-     *
-     * A SUCCEEDED goal can still carry a failed skill in its result fields.
-     *
-     * @param result The completed goal's wrapped result.
-     * @return SUCCESS or FAILURE for the leaf.
-     */
+    /// Judged rather than assumed: an action can succeed at the protocol level while the
+    /// skill it ran reports failure in its own result fields.
     virtual BT::NodeStatus judgeResult(const WrappedResult& result) = 0;
 
-    rclcpp::Node::SharedPtr  node_;
-    const std::atomic<bool>* stop_;
+    rclcpp::Node::SharedPtr node_;
 
 private:
-    /**
-     * @brief Waits for the server, in short slices so that a stop is seen within one of them.
-     *
-     * @param timeout_s The longest to wait.
-     * @return Whether the server is there.
-     */
-    bool waitForServer(double timeout_s)
-    {
-        using Clock         = std::chrono::steady_clock;
-        constexpr auto kNap = std::chrono::milliseconds(100);
-        const auto     end  = Clock::now() + std::chrono::duration_cast<Clock::duration>(
-                                            std::chrono::duration<double>(timeout_s));
-        for (;;)
-        {
-            if (client_->wait_for_action_server(std::min<Clock::duration>(
-                    std::max(end - Clock::now(), Clock::duration::zero()),
-                    kNap)))
-            {
-                return true;
-            }
-            if (Clock::now() >= end || windingDown(stop_))
-            {
-                return false;
-            }
-        }
-    }
-
     BT::NodeStatus onStart() override
     {
-        setFailureText({});
-        if (windingDown(stop_))
-        {
-            setFailureText("stopped");
-            return BT::NodeStatus::FAILURE;
-        }
         const double timeout = getInput<double>("server_timeout_s").value_or(10.0);
-        if (!waitForServer(timeout))
+        if (!client_->wait_for_action_server(std::chrono::duration<double>(timeout)))
         {
-            if (windingDown(stop_))
-            {
-                setFailureText("stopped");
-                return BT::NodeStatus::FAILURE;
-            }
             RCLCPP_ERROR(
                 node_->get_logger(),
                 "[%s] no action server on '%s' after %.1f s",
                 name().c_str(),
                 action_name_.c_str(),
                 timeout);
-            setFailureText(
-                std::format("no action server on {} after {:.1f} s", action_name_, timeout));
             return BT::NodeStatus::FAILURE;
         }
 
         Goal goal;
         if (!fillGoal(goal))
         {
-            setFailureText(std::format("the ports for {} are unusable; see the log", action_name_));
             return BT::NodeStatus::FAILURE;
         }
 
-        {
-            const std::lock_guard<std::mutex> lock(mutex_);
-            result_.reset();
-        }
+        result_.reset();
+        goal_handle_.reset();
 
         typename rclcpp_action::Client<ActionT>::SendGoalOptions options;
-        // Lands on the executor's thread, not this one.
-        options.result_callback = [this](const WrappedResult& result) {
-            const std::lock_guard<std::mutex> lock(mutex_);
-            result_ = result;
+        options.result_callback        = [this](const WrappedResult& result) { result_ = result; };
+        options.goal_response_callback = [this](typename GoalHandle::SharedPtr handle) {
+            goal_handle_ = handle;
         };
 
         goal_future_ = client_->async_send_goal(goal, options);
@@ -214,84 +117,43 @@ private:
         return BT::NodeStatus::RUNNING;
     }
 
-    /**
-     * @brief The server's answer to the goal that was sent.
-     *
-     * From the future, not goal_response_callback: rclcpp_action sets the future first, so a
-     * tick between the two would see an accepted goal as refused.
-     *
-     * @return The handle if the server accepted, null if it refused, nullopt while in flight.
-     */
-    std::optional<typename GoalHandle::SharedPtr> serverAnswer()
-    {
-        if (!goal_future_.valid() ||
-            goal_future_.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
-        {
-            return std::nullopt;
-        }
-        return goal_future_.get();
-    }
-
     BT::NodeStatus onRunning() override
     {
-        // Never spin here: an executor owns this node.
-        std::optional<WrappedResult> result;
+        // Nothing is spun here: the executor owns this node, and a leaf spinning it from
+        // inside a tick would re-enter the executor from its own callback.
+        if (!result_.has_value())
         {
-            const std::lock_guard<std::mutex> lock(mutex_);
-            result = result_;
-        }
-
-        if (!result.has_value())
-        {
-            // A refused goal never produces a result, so it is caught here.
-            const auto answer = serverAnswer();
-            if (answer.has_value() && *answer == nullptr)
+            // A rejected goal never produces a result, so the null handle has to be caught
+            // separately or the leaf runs forever.
+            if (goal_future_.valid() &&
+                goal_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready &&
+                goal_handle_ == nullptr)
             {
                 RCLCPP_ERROR(node_->get_logger(), "[%s] goal was rejected", name().c_str());
-                setFailureText(std::format(
-                    "{} rejected the goal (busy, or the goal is invalid)",
-                    action_name_));
                 return BT::NodeStatus::FAILURE;
             }
             return BT::NodeStatus::RUNNING;
         }
-        // Outside the lock: judgeResult is derived code, and it logs.
-        return judgeResult(*result);
+        return judgeResult(*result_);
     }
 
     void onHalted() override
     {
-        bool have_result = false;
+        // The tree has moved on; the robot has not. Cancelling is what keeps a halted skill
+        // from leaving an arm mid-trajectory.
+        if (goal_handle_ != nullptr)
         {
-            const std::lock_guard<std::mutex> lock(mutex_);
-            have_result = result_.has_value();
-            result_.reset();
+            RCLCPP_WARN(node_->get_logger(), "[%s] halted; cancelling the goal", name().c_str());
+            client_->async_cancel_goal(goal_handle_);
         }
-
-        // Must not throw: BT.CPP halts from ~Tree(), and terminating there skips the arm release.
-        try
-        {
-            // Not once the result is in: rclcpp_action forgets a finished goal, and cancelling
-            // a forgotten goal throws.
-            const auto answer = serverAnswer();
-            if (!have_result && answer.has_value() && *answer != nullptr)
-            {
-                RCLCPP_WARN(node_->get_logger(), "[%s] halted; cancelling the goal", name().c_str());
-                client_->async_cancel_goal(*answer);
-            }
-        }
-        catch (const std::exception& e)
-        {
-            // The result raced the cancel, or the request could not be published.
-            RCLCPP_WARN(node_->get_logger(), "[%s] cancel not sent: %s", name().c_str(), e.what());
-        }
-        goal_future_ = {};
+        goal_handle_.reset();
+        result_.reset();
     }
 
     typename rclcpp_action::Client<ActionT>::SharedPtr client_;
     std::string                                        action_name_;
     std::shared_future<typename GoalHandle::SharedPtr> goal_future_;
-    std::mutex                                         mutex_;
+    typename GoalHandle::SharedPtr                     goal_handle_;
     std::optional<WrappedResult>                       result_;
 };
 

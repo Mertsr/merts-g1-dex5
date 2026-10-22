@@ -1,0 +1,575 @@
+Gives the simulated G1 the Inspire RH56E2 hands.
+
+Generated against unitree_mujoco ae6a8403e272733e9996ef59990880330496177f by
+workspace/patches/unitree_mujoco/tools/make_rh56e2_patch.py, from the expanded
+g1_description/urdf/g1_arm_sdk.urdf.xacro, so the simulator and the model MoveIt plans against
+cannot drift. Do not edit by hand; rerun the generator. It replaces 003-add-dex3-hands.patch.
+
+The stock g1_29dof.xml ends each arm in a fixed rubber-hand geom with no joints. This replaces
+both with the real body tree: 32 bodies per hand, 12 hinge joints, of which 6 are
+driven and 6 follow a driver through a joint equality constraint (the URDF's <mimic> tags,
+with the same multipliers). The meshes are loaded from meshes/rh56e2/{left,right}/, which the
+image build copies in from g1_description/meshes/rh56e2/.
+
+THE HAND COLLIDES. Every hand body carries a second geom of class rh56e2_collision: the same
+mesh, collided as its convex hull, hidden in group 3. It contacts the world, scene objects and
+the rest of the robot, never another hand geom (bitmask, see the class), and the bodies bolted
+to the flange are excluded from the two wrist links. So the hand stops at a wall instead of
+passing through it, and a closed hand holds an object by friction. grasp_weld still runs when
+its config enables it; with contact on, a hand that closes on a large object stops on its
+surface and may never reach the weld's closure threshold, so the grip is then friction alone.
+The fingertip force-sensor pads get no collision geom: g1_description still ships them as 1 cm
+placeholder tetrahedra, which as hulls stuck out of the fingertips as spikes and were the only
+thing touching a part. The finger segments' own meshes collide there instead.
+
+NO ACTUATORS AND NO SENSORS, which is not an oversight. RobotBridge sets
+num_motor_ = mj_model_->nu and then indexes lowcmd->msg_.motor_cmd()[i], a fixed
+std::array<MotorCmd_, 35>; it also reads motor state as three contiguous nu-sized blocks
+of sensordata. Adding 12 actuators would take nu to 41 and run both loops off the end of
+those arrays. Keeping nu at 29 leaves the vendored bridge byte-identical and correct, and
+the hand is a separate device on its own DDS topics anyway, so it
+is driven through qfrc_applied by dex3_handler instead (the file keeps its Dex3 name; it now
+serves the RH56E2).
+
+HAND MASS IS SCALED TO 0.170 kg PER HAND, not the real 0.777 kg, and that is a deliberate
+simulator-only deviation. 0.170 kg is what the stock model lumped into each wrist_yaw_link
+for the rubber hand, so the model's total mass and its distribution come out exactly where
+they were. Each wrist_yaw_link inertial goes back to the URDF's own value, since the hand is now
+a body of its own and the lumped mass would double-count.
+
+Why: the walking policy in g1_motion_service_sim is a third-party RL checkpoint, and it is
+this stack's stand-in for a controller the real robot has and the simulator does not. It could
+not balance under the Dex3's true hand mass (0.697 kg), measured: 6 of 12 balance tests failing.
+The RH56E2 is heavier still. On hardware locomotion goes through LocoClient to Unitree's own
+onboard controller, which never sees this policy, so the instability is structurally
+simulator-only. What it costs: the simulated arm carries less inertia than the real one, so arm
+motion under arm_sdk will track better here than on hardware.
+
+THE POLICY HAS NOT BEEN RE-TESTED WITH THIS HAND. The scaling keeps the mass and its position
+along the arm as they were, but the RH56E2 is much longer than the rubber hand, so its centre of
+mass sits further out, and the stock scaling argument covers mass and not that. Run
+g1_motion_service_sim's balance tests before trusting it.
+
+--- a/unitree_robots/g1/g1_29dof.xml
++++ b/unitree_robots/g1/g1_29dof.xml
+@@ -17,7 +17,30 @@
+     <default class="wrist_motor">
+       <joint damping="0.05" armature="0.01" frictionloss="0.1"/>
+     </default>
+-    
++    <!-- RH56E2 fingers. No <actuator> and no <sensor> entries on purpose: the SDK bridge
++         sizes itself from nu and indexes a fixed 35-slot LowCmd, so 29 + 12 would run it
++         off the end of the array. The hand is a separate device on its own topics and is
++         driven through qfrc_applied instead. armature deliberately dominates the physical
++         finger inertia (~1e-5 kg m^2), which keeps the hand's PD overdamped at the 2 ms
++         timestep so its gains drive the sim unchanged rather than being retuned for it. -->
++    <default class="rh56e2_motor">
++      <joint damping="0.01" armature="0.001" frictionloss="0.01"/>
++    </default>
++    <!-- What you see: no contact, no mass (the bodies carry explicit inertials). -->
++    <default class="rh56e2_visual">
++      <geom type="mesh" contype="0" conaffinity="0" group="1" density="0"
++        rgba="0.7 0.7 0.7 1"/>
++    </default>
++    <!-- What collides: the same meshes as convex hulls, hidden in group 3. Bitmask
++         contype=2 / conaffinity=1 against everything else's 1 / 1: a hand geom contacts the
++         world, scene objects and the rest of the robot, but never another hand geom --
++         adjacent finger hulls overlap at their joints and would otherwise be in permanent
++         contact. condim 4 adds torsional friction so a pinched object does not spin out;
++         sliding friction 1.5 is a GUESS for rubber finger pads, not a measurement. -->
++    <default class="rh56e2_collision">
++      <geom type="mesh" contype="2" conaffinity="1" condim="4" group="3" density="0"
++        friction="1.5 0.02 0.001" rgba="0.9 0.4 0.3 0.5"/>
++    </default>
+   </default>
+ 
+   <asset>
+@@ -48,7 +71,38 @@
+     <mesh name="left_wrist_roll_link" file="left_wrist_roll_link.STL" />
+     <mesh name="left_wrist_pitch_link" file="left_wrist_pitch_link.STL" />
+     <mesh name="left_wrist_yaw_link" file="left_wrist_yaw_link.STL" />
+-    <mesh name="left_rubber_hand" file="left_rubber_hand.STL" />
++    <mesh name="left_dex5_base_link" file="rh56e2/left/base_link.STL" />
++    <mesh name="left_thumb_1" file="rh56e2/left/left_thumb_1.STL" />
++    <mesh name="left_thumb_2" file="rh56e2/left/left_thumb_2.STL" />
++    <mesh name="left_thumb_3" file="rh56e2/left/left_thumb_3.STL" />
++    <mesh name="left_thumb_force_sensor_2" file="rh56e2/left/left_thumb_force_sensor_2.STL" />
++    <mesh name="left_thumb_4" file="rh56e2/left/left_thumb_4.STL" />
++    <mesh name="left_thumb_force_sensor_3" file="rh56e2/left/left_thumb_force_sensor_3.STL" />
++    <mesh name="left_thumb_force_sensor_4" file="rh56e2/left/left_thumb_force_sensor_4.STL" />
++    <mesh name="left_thumb_force_sensor_1" file="rh56e2/left/left_thumb_force_sensor_1.STL" />
++    <mesh name="left_index_1" file="rh56e2/left/left_index_1.STL" />
++    <mesh name="left_index_2" file="rh56e2/left/left_index_2.STL" />
++    <mesh name="left_index_force_sensor_2" file="rh56e2/left/left_index_force_sensor_2.STL" />
++    <mesh name="left_index_force_sensor_3" file="rh56e2/left/left_index_force_sensor_3.STL" />
++    <mesh name="left_index_force_sensor_1" file="rh56e2/left/left_index_force_sensor_1.STL" />
++    <mesh name="left_middle_1" file="rh56e2/left/left_middle_1.STL" />
++    <mesh name="left_middle_2" file="rh56e2/left/left_middle_2.STL" />
++    <mesh name="left_middle_force_sensor_2" file="rh56e2/left/left_middle_force_sensor_2.STL" />
++    <mesh name="left_middle_force_sensor_3" file="rh56e2/left/left_middle_force_sensor_3.STL" />
++    <mesh name="left_middle_force_sensor_1" file="rh56e2/left/left_middle_force_sensor_1.STL" />
++    <mesh name="left_ring_1" file="rh56e2/left/left_ring_1.STL" />
++    <mesh name="left_ring_2" file="rh56e2/left/left_ring_2.STL" />
++    <mesh name="left_ring_force_sensor_2" file="rh56e2/left/left_ring_force_sensor_2.STL" />
++    <mesh name="left_ring_force_sensor_3" file="rh56e2/left/left_ring_force_sensor_3.STL" />
++    <mesh name="left_ring_force_sensor_1" file="rh56e2/left/left_ring_force_sensor_1.STL" />
++    <mesh name="left_little_1" file="rh56e2/left/left_little_1.STL" />
++    <mesh name="left_little_2" file="rh56e2/left/left_little_2.STL" />
++    <mesh name="left_little_force_sensor_2" file="rh56e2/left/left_little_force_sensor_2.STL" />
++    <mesh name="left_little_force_sensor_3" file="rh56e2/left/left_little_force_sensor_3.STL" />
++    <mesh name="left_little_force_sensor_1" file="rh56e2/left/left_little_force_sensor_1.STL" />
++    <mesh name="left_plam_1" file="rh56e2/left/left_plam_1.STL" />
++    <mesh name="left_plam_2" file="rh56e2/left/left_plam_2.STL" />
++    <mesh name="left_plam_force_sensor" file="rh56e2/left/left_plam_force_sensor.STL" />
+     <mesh name="right_shoulder_pitch_link" file="right_shoulder_pitch_link.STL" />
+     <mesh name="right_shoulder_roll_link" file="right_shoulder_roll_link.STL" />
+     <mesh name="right_shoulder_yaw_link" file="right_shoulder_yaw_link.STL" />
+@@ -56,7 +110,38 @@
+     <mesh name="right_wrist_roll_link" file="right_wrist_roll_link.STL" />
+     <mesh name="right_wrist_pitch_link" file="right_wrist_pitch_link.STL" />
+     <mesh name="right_wrist_yaw_link" file="right_wrist_yaw_link.STL" />
+-    <mesh name="right_rubber_hand" file="right_rubber_hand.STL" />
++    <mesh name="right_dex5_base_link" file="rh56e2/right/base_link.STL" />
++    <mesh name="right_plam_1" file="rh56e2/right/right_plam_1.STL" />
++    <mesh name="right_plam_2" file="rh56e2/right/right_plam_2.STL" />
++    <mesh name="right_plam_force_sensor" file="rh56e2/right/right_plam_force_sensor.STL" />
++    <mesh name="right_thumb_1" file="rh56e2/right/right_thumb_1.STL" />
++    <mesh name="right_thumb_2" file="rh56e2/right/right_thumb_2.STL" />
++    <mesh name="right_thumb_3" file="rh56e2/right/right_thumb_3.STL" />
++    <mesh name="right_thumb_force_sensor_2" file="rh56e2/right/right_thumb_force_sensor_2.STL" />
++    <mesh name="right_thumb_4" file="rh56e2/right/right_thumb_4.STL" />
++    <mesh name="right_thumb_force_sensor_3" file="rh56e2/right/right_thumb_force_sensor_3.STL" />
++    <mesh name="right_thumb_force_sensor_4" file="rh56e2/right/right_thumb_force_sensor_4.STL" />
++    <mesh name="right_thumb_force_sensor_1" file="rh56e2/right/right_thumb_force_sensor_1.STL" />
++    <mesh name="right_index_1" file="rh56e2/right/right_index_1.STL" />
++    <mesh name="right_index_2" file="rh56e2/right/right_index_2.STL" />
++    <mesh name="right_index_force_sensor_2" file="rh56e2/right/right_index_force_sensor_2.STL" />
++    <mesh name="right_index_force_sensor_3" file="rh56e2/right/right_index_force_sensor_3.STL" />
++    <mesh name="right_index_force_sensor_1" file="rh56e2/right/right_index_force_sensor_1.STL" />
++    <mesh name="right_middle_1" file="rh56e2/right/right_middle_1.STL" />
++    <mesh name="right_middle_2" file="rh56e2/right/right_middle_2.STL" />
++    <mesh name="right_middle_force_sensor_2" file="rh56e2/right/right_middle_force_sensor_2.STL" />
++    <mesh name="right_middle_force_sensor_3" file="rh56e2/right/right_middle_force_sensor_3.STL" />
++    <mesh name="right_middle_force_sensor_1" file="rh56e2/right/right_middle_force_sensor_1.STL" />
++    <mesh name="right_ring_1" file="rh56e2/right/right_ring_1.STL" />
++    <mesh name="right_ring_2" file="rh56e2/right/right_ring_2.STL" />
++    <mesh name="right_ring_force_sensor_2" file="rh56e2/right/right_ring_force_sensor_2.STL" />
++    <mesh name="right_ring_force_sensor_3" file="rh56e2/right/right_ring_force_sensor_3.STL" />
++    <mesh name="right_ring_force_sensor_1" file="rh56e2/right/right_ring_force_sensor_1.STL" />
++    <mesh name="right_little_1" file="rh56e2/right/right_little_1.STL" />
++    <mesh name="right_little_2" file="rh56e2/right/right_little_2.STL" />
++    <mesh name="right_little_force_sensor_2" file="rh56e2/right/right_little_force_sensor_2.STL" />
++    <mesh name="right_little_force_sensor_3" file="rh56e2/right/right_little_force_sensor_3.STL" />
++    <mesh name="right_little_force_sensor_1" file="rh56e2/right/right_little_force_sensor_1.STL" />
+   </asset>
+ 
+   <worldbody>
+@@ -284,17 +369,175 @@
+                           rgba="0.7 0.7 0.7 1" mesh="left_wrist_pitch_link" />
+                         <geom type="mesh" rgba="0.7 0.7 0.7 1" mesh="left_wrist_pitch_link" />
+                         <body name="left_wrist_yaw_link" pos="0.046 0 0">
+-                          <inertial pos="0.0708244 0.000191745 0.00161742"
+-                            quat="0.510571 0.526295 0.468078 0.493188" mass="0.254576"
+-                            diaginertia="0.000646113 0.000559993 0.000147566" />
++                          <inertial pos="0.0220038157 0.00049485096 0.00053861123" mass="0.08457647" fullinertia="4.92912883e-05 5.97333813e-05 3.92808383e-05 -4.5735494e-07 4.45867591e-06 4.3217198e-07" />
+                           <joint name="left_wrist_yaw_joint" pos="0 0 0" axis="0 0 1"
+                             range="-1.61443 1.61443" actuatorfrcrange="-5 5" class="wrist_motor" />
+                           <geom type="mesh" contype="0" conaffinity="0" group="1" density="0"
+                             rgba="0.7 0.7 0.7 1" mesh="left_wrist_yaw_link" />
+                           <geom type="mesh" rgba="0.7 0.7 0.7 1" mesh="left_wrist_yaw_link" />
+-                          <geom pos="0.0415 0.003 0" quat="1 0 0 0" type="mesh" contype="0"
+-                            conaffinity="0" group="1" density="0" rgba="0.7 0.7 0.7 1"
+-                            mesh="left_rubber_hand" />
++                          <!-- Inspire RH56E2, generated from the expanded g1_arm_sdk.urdf.xacro by
++                               make_rh56e2_patch.py so the sim and the model MoveIt plans
++                               against cannot drift. left_hand_palm_link is an empty frame at the
++                               flange, as in the URDF, and is what grasp_weld welds to. Masses are
++                               scaled to 0.170 kg per hand; the patch header says why.
++                               The wrist inertial above is the URDF's own again. -->
++                          <body name="left_hand_palm_link" pos="0.0415 0.003 0">
++                            <body name="left_dex5_base_link" pos="0 0 0" quat="0.500000013 0.5 -0.499999987 -0.5">
++                              <inertial pos="0.0005853065 -4.36854348e-08 -0.0188226626" mass="0.0196996775" fullinertia="6.10001348e-06 5.86186654e-06 7.98683516e-06 -1.04657712e-11 -8.67805631e-09 -2.31657321e-12" />
++                              <geom class="rh56e2_visual" mesh="left_dex5_base_link" rgba="1 1 1 1" />
++                              <geom class="rh56e2_collision" mesh="left_dex5_base_link" />
++                              <body name="left_thumb_1" pos="0.02101 0.0269 -0.0826" quat="3.6732051e-06 -1 0 0">
++                                <inertial pos="0.00067 0.00494 -0.00671" mass="0.00336426715" fullinertia="2.14356569e-07 1.47428009e-07 1.89027161e-07 1.35643224e-08 -1.072538e-09 7.94334775e-09" />
++                                <joint name="left_thumb_1_joint" axis="0 0 1" range="0 1.658" class="rh56e2_motor" />
++                                <geom class="rh56e2_visual" mesh="left_thumb_1" rgba="1 1 1 1" />
++                                <geom class="rh56e2_collision" mesh="left_thumb_1" />
++                                <body name="left_thumb_2" pos="0.013438 -0.012862 -0.0076" quat="0.499998163 0.5 -0.500001837 -0.5">
++                                  <inertial pos="-0.03301 0.01346 0.00542" mass="0.0241518046" fullinertia="4.37091629e-06 7.36834699e-06 9.26926518e-06 -2.45921143e-06 -8.68221698e-07 -2.68202354e-07" />
++                                  <joint name="left_thumb_2_joint" axis="0.173649561 0 0.984807509" range="0 0.62" class="rh56e2_motor" />
++                                  <geom class="rh56e2_visual" mesh="left_thumb_2" rgba="0.25 0.25 0.25 1" />
++                                  <geom class="rh56e2_collision" mesh="left_thumb_2" />
++                                  <body name="left_thumb_3" pos="0.052954 0.032799 -0.0093372">
++                                    <inertial pos="-0.01108 0.00155 0.01153" mass="0.00389396959" fullinertia="6.7712826e-07 5.63828848e-07 7.2834961e-07 -8.56301205e-08 2.830187e-09 1.66571718e-09" />
++                                    <joint name="left_thumb_3_joint" axis="0.173649561 0 0.984807509" range="0 0.541052068" class="rh56e2_motor" />
++                                    <geom class="rh56e2_visual" mesh="left_thumb_3" rgba="0.25 0.25 0.25 1" />
++                                    <geom class="rh56e2_collision" mesh="left_thumb_3" />
++                                    <body name="left_thumb_force_sensor_2" pos="0.0080283 0.016443 0.00982" quat="0.313703514 -0.565844374 0.365048384 0.66944001">
++                                      <inertial pos="-6.77023624e-05 0.000236984758 -0.000558267315" mass="2.60526563e-05" fullinertia="2.23799602e-10 2.18237176e-10 4.35724352e-10 -1.47143568e-13 -2.50056511e-13 -1.78693413e-12" />
++                                      <geom class="rh56e2_visual" mesh="left_thumb_force_sensor_2" rgba="0.25 0.25 0.25 1" />
++                                    </body>
++                                    <body name="left_thumb_4" pos="0.01865 0.013373 -0.0022731">
++                                      <inertial pos="-0.01264 0.00773 0.0105" mass="0.00167666144" fullinertia="2.52431668e-07 1.25935661e-07 2.53751546e-07 -3.62758617e-08 -8.75541223e-12 1.53219714e-11" />
++                                      <joint name="left_thumb_4_joint" axis="0.173649561 0 0.984807509" range="0 0.455530935" class="rh56e2_motor" />
++                                      <geom class="rh56e2_visual" mesh="left_thumb_4" rgba="0.25 0.25 0.25 1" />
++                                      <geom class="rh56e2_collision" mesh="left_thumb_4" />
++                                      <body name="left_thumb_force_sensor_3" pos="0.0076349 0.020486 0.0088094" quat="0.202450873 -0.610088171 0.241274464 0.727043809">
++                                        <inertial pos="2.75155277e-07 0.00069664479 -0.000425123284" mass="3.71873387e-05" fullinertia="8.57364032e-10 3.10561995e-10 1.15905205e-09 -8.42448762e-16 5.62167612e-14 -3.78576891e-11" />
++                                        <geom class="rh56e2_visual" mesh="left_thumb_force_sensor_3" rgba="0.25 0.25 0.25 1" />
++                                      </body>
++                                      <body name="left_thumb_force_sensor_4" pos="0.018831 0.027914 0.0068352" quat="0.493414995 -0.41193013 0.588196077 0.49079587">
++                                        <inertial pos="1.53421438e-06 -0.000421608117 -0.000751976731" mass="3.65518923e-06" fullinertia="4.94184639e-12 5.05131289e-12 9.44790582e-12 5.52385543e-16 -1.16010435e-15 3.81750931e-14" />
++                                        <geom class="rh56e2_visual" mesh="left_thumb_force_sensor_4" rgba="0.25 0.25 0.25 1" />
++                                      </body>
++                                    </body>
++                                  </body>
++                                  <body name="left_thumb_force_sensor_1" pos="0.023412 0.033251 0.0070079" quat="0.345089693 -0.542906719 0.410331488 0.646369452">
++                                    <inertial pos="-0.000315253413 8.0083128e-05 -0.000511444693" mass="5.12961046e-05" fullinertia="1.49407927e-09 6.38533739e-10 2.12082441e-09 2.91840951e-12 -2.02264778e-12 -3.93319719e-11" />
++                                    <geom class="rh56e2_visual" mesh="left_thumb_force_sensor_1" rgba="0.25 0.25 0.25 1" />
++                                  </body>
++                                </body>
++                              </body>
++                              <body name="left_index_1" pos="0.00056467 0.038679 -0.1564" quat="0.719336237 -0.69466206 0 0">
++                                <inertial pos="0.00132 0.01078 0.00805" mass="0.00409096636" fullinertia="7.87903924e-07 2.63982245e-07 8.31079051e-07 9.11569744e-08 -3.63349608e-10 1.37897743e-10" />
++                                <joint name="left_index_1_joint" axis="0 0 -1" range="0 1.4381" class="rh56e2_motor" />
++                                <geom class="rh56e2_visual" mesh="left_index_1" rgba="0.25 0.25 0.25 1" />
++                                <geom class="rh56e2_collision" mesh="left_index_1" />
++                                <body name="left_index_2" pos="0.0034259 0.032596 -0.00055">
++                                  <inertial pos="-0.00016 0.0177 0.008" mass="0.00241211607" fullinertia="5.08218847e-07 9.04871854e-08 5.30542959e-07 1.235126e-07 1.96996775e-11 -8.53652692e-11" />
++                                  <joint name="left_index_2_joint" axis="0 0 -1" range="0 1.476374" class="rh56e2_motor" />
++                                  <geom class="rh56e2_visual" mesh="left_index_2" rgba="0.25 0.25 0.25 1" />
++                                  <geom class="rh56e2_collision" mesh="left_index_2" />
++                                  <body name="left_index_force_sensor_2" pos="0.0081655 0.037446 -0.0060795" quat="0.984663618 -0.018287798 0.00322184295 -0.173472581">
++                                    <inertial pos="-0.000722888601 0.00020646973 3.92383752e-06" mass="5.59795215e-05" fullinertia="1.55970766e-09 5.33988113e-10 1.05038173e-09 -6.67960041e-12 -3.29251223e-13 -1.89158402e-11" />
++                                    <geom class="rh56e2_visual" mesh="left_index_force_sensor_2" rgba="0.25 0.25 0.25 1" />
++                                  </body>
++                                  <body name="left_index_force_sensor_3" pos="0.0086237 0.052572 -0.0060954" quat="0.669769626 -0.257027413 0.658738941 0.226734569">
++                                    <inertial pos="2.48711721e-05 -0.00034528419 -0.00133798869" mass="1.48766252e-05" fullinertia="2.88876247e-11 5.54730805e-11 6.14054033e-11 -1.236916e-12 -1.70754327e-13 1.99661634e-12" />
++                                    <geom class="rh56e2_visual" mesh="left_index_force_sensor_3" rgba="0.25 0.25 0.25 1" />
++                                  </body>
++                                </body>
++                                <body name="left_index_force_sensor_1" pos="0.012046 0.019649 -0.006651" quat="0.704358027 -0.0873852638 0.701686455 0.0622872772">
++                                  <inertial pos="-4.3998e-06 0.00011649 -0.00056743" mass="4.43877512e-05" fullinertia="7.39963665e-10 4.29956406e-10 1.15599897e-09 1.10948584e-11 4.79139934e-14 -1.20962587e-12" />
++                                  <geom class="rh56e2_visual" mesh="left_index_force_sensor_1" rgba="0.25 0.25 0.25 1" />
++                                </body>
++                              </body>
++                              <body name="left_middle_1" pos="0.00056467 0.0171 -0.157" quat="0.707105483 -0.70710808 0 0">
++                                <inertial pos="0.00137 0.01101 0.00806" mass="0.00408439981" fullinertia="7.86544646e-07 2.62723655e-07 8.28533415e-07 8.76832646e-08 -3.58971901e-10 2.6485122e-10" />
++                                <joint name="left_middle_1_joint" axis="0 0 -1" range="0 1.4381" class="rh56e2_motor" />
++                                <geom class="rh56e2_visual" mesh="left_middle_1" rgba="0.25 0.25 0.25 1" />
++                                <geom class="rh56e2_collision" mesh="left_middle_1" />
++                                <body name="left_middle_2" pos="0.0034259 0.032596 -0.00055">
++                                  <inertial pos="0.0019 0.02314 0.00802" mass="0.00386770335" fullinertia="1.01503245e-06 2.14967259e-07 1.09522546e-06 2.95851946e-07 6.39145093e-10 -2.51936987e-09" />
++                                  <joint name="left_middle_2_joint" axis="0 0 -1" range="0 1.476374" class="rh56e2_motor" />
++                                  <geom class="rh56e2_visual" mesh="left_middle_2" rgba="0.25 0.25 0.25 1" />
++                                  <geom class="rh56e2_collision" mesh="left_middle_2" />
++                                  <body name="left_middle_force_sensor_2" pos="0.009086 0.040962 -0.0061003" quat="0.694851182 0.131078757 0.694851931 -0.13107627">
++                                    <inertial pos="6.77351601e-07 2.94313229e-05 -0.000722425776" mass="5.74735014e-05" fullinertia="1.10350757e-09 5.62049284e-10 1.64045308e-09 4.09431927e-14 -4.20694055e-15 7.59861645e-13" />
++                                    <geom class="rh56e2_visual" mesh="left_middle_force_sensor_2" rgba="0.25 0.25 0.25 1" />
++                                  </body>
++                                  <body name="left_middle_force_sensor_3" pos="0.0098294 0.056051 -0.0061006" quat="0.667286172 -0.233942239 0.667285575 0.233944767">
++                                    <inertial pos="-8.06940799e-08 -0.000365444699 -0.00127684015" mass="1.45539964e-05" fullinertia="2.78482776e-11 5.33403836e-11 6.03849901e-11 -1.96262125e-15 -1.91985352e-15 1.66632249e-12" />
++                                    <geom class="rh56e2_visual" mesh="left_middle_force_sensor_3" rgba="0.25 0.25 0.25 1" />
++                                  </body>
++                                </body>
++                                <body name="left_middle_force_sensor_1" pos="0.012046 0.019649 -0.006651" quat="0.703134564 -0.0748469363 0.7031339 0.0748494474">
++                                  <inertial pos="-2.38805233e-07 0.000116575254 -0.000567426157" mass="4.4388741e-05" fullinertia="7.40365586e-10 4.29549559e-10 1.15599817e-09 6.22979781e-15 4.71876582e-15 -1.21051447e-12" />
++                                  <geom class="rh56e2_visual" mesh="left_middle_force_sensor_1" rgba="0.25 0.25 0.25 1" />
++                                </body>
++                              </body>
++                              <body name="left_ring_1" pos="0.00056467 -0.0045302 -0.15683" quat="0.688338691 -0.725389444 0 0">
++                                <inertial pos="0.00119 0.01036 0.00861" mass="0.00409096636" fullinertia="7.90090588e-07 2.63334345e-07 8.29470244e-07 8.47633346e-08 -4.80453246e-09 2.98975439e-08" />
++                                <joint name="left_ring_1_joint" axis="0 0 -1" range="0 1.4381" class="rh56e2_motor" />
++                                <geom class="rh56e2_visual" mesh="left_ring_1" rgba="0.25 0.25 0.25 1" />
++                                <geom class="rh56e2_collision" mesh="left_ring_1" />
++                                <body name="left_ring_2" pos="0.0034259 0.032596 -0.00055">
++                                  <inertial pos="-0.00057 0.01725 0.00891" mass="0.00241211607" fullinertia="5.1374789e-07 8.64443738e-08 5.29315013e-07 1.13732805e-07 -5.91428096e-09 2.33506844e-08" />
++                                  <joint name="left_ring_2_joint" axis="0 0 -1" range="0 1.476374" class="rh56e2_motor" />
++                                  <geom class="rh56e2_visual" mesh="left_ring_2" rgba="0.25 0.25 0.25 1" />
++                                  <geom class="rh56e2_collision" mesh="left_ring_2" />
++                                  <body name="left_ring_force_sensor_2" pos="0.0081655 0.037446 -0.0060795" quat="0.699526869 0.142038091 0.69269422 -0.10325724">
++                                    <inertial pos="1.52347834e-05 0.000205944196 -0.000722888367" mass="5.5979521e-05" fullinertia="1.04943519e-09 5.3493458e-10 1.55970756e-09 -2.9080323e-11 -2.91419721e-13 -6.68136665e-12" />
++                                    <geom class="rh56e2_visual" mesh="left_ring_force_sensor_2" rgba="0.25 0.25 0.25 1" />
++                                  </body>
++                                  <body name="left_ring_force_sensor_3" pos="0.0086237 0.052572 -0.0060954" quat="0.655783141 -0.219108208 0.672303293 0.264477497">
++                                    <inertial pos="-1.45503842e-05 -0.00034586663 -0.00133798468" mass="1.48767069e-05" fullinertia="2.89518617e-11 5.54095519e-11 6.14060385e-11 1.79706958e-12 5.75408957e-14 2.00301273e-12" />
++                                    <geom class="rh56e2_visual" mesh="left_ring_force_sensor_3" rgba="0.25 0.25 0.25 1" />
++                                  </body>
++                                </body>
++                                <body name="left_ring_force_sensor_1" pos="0.012046 0.019649 -0.006651" quat="0.700876149 -0.0559808742 0.704887395 0.0936617611">
++                                  <inertial pos="6.00203522e-06 0.00011642139 -0.000567426346" mass="4.43887218e-05" fullinertia="7.39475575e-10 4.30439307e-10 1.15599792e-09 -1.6608744e-11 -6.01016199e-14 -1.2091074e-12" />
++                                  <geom class="rh56e2_visual" mesh="left_ring_force_sensor_1" rgba="0.25 0.25 0.25 1" />
++                                </body>
++                              </body>
++                              <body name="left_little_1" pos="0.00056467 -0.025916 -0.15365" quat="0.669136582 -0.743139445 0 0">
++                                <inertial pos="0.00081 0.00991 0.00914" mass="0.00409096636" fullinertia="7.95569288e-07 2.62506958e-07 8.24641634e-07 6.6182161e-08 -7.31514692e-09 5.99067193e-08" />
++                                <joint name="left_little_1_joint" axis="0 0 -1" range="0 1.4381" class="rh56e2_motor" />
++                                <geom class="rh56e2_visual" mesh="left_little_1" rgba="0.25 0.25 0.25 1" />
++                                <geom class="rh56e2_collision" mesh="left_little_1" />
++                                <body name="left_little_2" pos="0.0034259 0.032596 -0.00055">
++                                  <inertial pos="-0.00094 0.01672 0.0098" mass="0.00255220266" fullinertia="5.03298305e-07 1.01420506e-07 5.10738217e-07 1.05178767e-07 -1.10471414e-08 4.34268447e-08" />
++                                  <joint name="left_little_2_joint" axis="0 0 -1" range="0 1.476374" class="rh56e2_motor" />
++                                  <geom class="rh56e2_visual" mesh="left_little_2" rgba="0.25 0.25 0.25 1" />
++                                  <geom class="rh56e2_collision" mesh="left_little_2" />
++                                  <body name="left_little_force_sensor_2" pos="0.0064514 0.027683 -0.0061172" quat="0.702403385 0.158792528 0.689046542 -0.081420395">
++                                    <inertial pos="-1.8061703e-05 -0.000118388091 -0.000773722866" mass="6.13418952e-05" fullinertia="1.17332317e-09 6.10429187e-10 1.75317822e-09 -6.35607397e-11 9.22055382e-13 7.89212168e-12" />
++                                    <geom class="rh56e2_visual" mesh="left_little_force_sensor_2" rgba="0.25 0.25 0.25 1" />
++                                  </body>
++                                  <body name="left_little_force_sensor_3" pos="0.0063973 0.042707 -0.0061154" quat="0.645290828 -0.198164905 0.678771627 0.289135774">
++                                    <inertial pos="-6.37037928e-05 -0.000437210531 -0.00112816117" mass="1.33637506e-05" fullinertia="2.44257607e-11 4.75433188e-11 5.51705459e-11 3.25971192e-12 2.58929261e-13 1.76833842e-12" />
++                                    <geom class="rh56e2_visual" mesh="left_little_force_sensor_3" rgba="0.25 0.25 0.25 1" />
++                                  </body>
++                                </body>
++                                <body name="left_little_force_sensor_1" pos="0.012046 0.019649 -0.006651" quat="0.698120181 -0.0371073665 0.706132594 0.112374448">
++                                  <inertial pos="1.22242689e-05 0.000115932853 -0.000567426208" mass="4.43887366e-05" fullinertia="7.36815241e-10 4.33099941e-10 1.15599821e-09 -3.30289351e-11 -1.24715087e-13 -1.20410065e-12" />
++                                  <geom class="rh56e2_visual" mesh="left_little_force_sensor_1" rgba="0.25 0.25 0.25 1" />
++                                </body>
++                              </body>
++                              <body name="left_plam_1" pos="0 0 -0.031" quat="3.6732051e-06 1 0 0">
++                                <inertial pos="-0.00625 0.00223 0.0689" mass="0.084012558" fullinertia="0.000120198116 8.76330261e-05 4.92964643e-05 9.68431769e-07 6.53569853e-06 -2.09490092e-06" />
++                                <geom class="rh56e2_visual" mesh="left_plam_1" rgba="0.25 0.25 0.25 1" />
++                                <geom class="rh56e2_collision" mesh="left_plam_1" />
++                                <body name="left_plam_2" pos="0 0 0">
++                                  <inertial pos="-0.0282279109 -0.000242127036 0.0835826422" mass="0.00448816853" fullinertia="5.20227001e-06 2.7982963e-06 2.63432251e-06 -2.82520901e-09 -1.40910585e-08 2.15144056e-08" />
++                                  <geom class="rh56e2_visual" mesh="left_plam_2" rgba="1 1 1 1" />
++                                  <geom class="rh56e2_collision" mesh="left_plam_2" />
++                                </body>
++                                <body name="left_plam_force_sensor" pos="0.012296 -0.00036819 0.088601" quat="0.499998163 0.5 0.500001837 0.5">
++                                  <inertial pos="-0.000120093335 0.000717297414 -0.00069288907" mass="0.000527265275" fullinertia="3.9232531e-08 1.09855761e-07 1.48845781e-07 -7.93098622e-11 4.52739805e-11 -9.27060383e-11" />
++                                  <geom class="rh56e2_visual" mesh="left_plam_force_sensor" rgba="0.25 0.25 0.25 1" />
++                                </body>
++                              </body>
++                            </body>
++                          </body>
+                         </body>
+                       </body>
+                     </body>
+@@ -360,17 +603,175 @@
+                           rgba="0.7 0.7 0.7 1" mesh="right_wrist_pitch_link" />
+                         <geom type="mesh" rgba="0.7 0.7 0.7 1" mesh="right_wrist_pitch_link" />
+                         <body name="right_wrist_yaw_link" pos="0.046 0 0">
+-                          <inertial pos="0.0708244 -0.000191745 0.00161742"
+-                            quat="0.493188 0.468078 0.526295 0.510571" mass="0.254576"
+-                            diaginertia="0.000646113 0.000559993 0.000147566" />
++                          <inertial pos="0.0220038157 -0.00049485096 0.00053861123" mass="0.08457647" fullinertia="4.92912883e-05 5.97333813e-05 3.92808383e-05 4.5735494e-07 4.45867591e-06 -4.3217198e-07" />
+                           <joint name="right_wrist_yaw_joint" pos="0 0 0" axis="0 0 1"
+                             range="-1.61443 1.61443" actuatorfrcrange="-5 5" class="wrist_motor" />
+                           <geom type="mesh" contype="0" conaffinity="0" group="1" density="0"
+                             rgba="0.7 0.7 0.7 1" mesh="right_wrist_yaw_link" />
+                           <geom type="mesh" rgba="0.7 0.7 0.7 1" mesh="right_wrist_yaw_link" />
+-                          <geom pos="0.0415 -0.003 0" quat="1 0 0 0" type="mesh" contype="0"
+-                            conaffinity="0" group="1" density="0" rgba="0.7 0.7 0.7 1"
+-                            mesh="right_rubber_hand" />
++                          <!-- Inspire RH56E2, generated from the expanded g1_arm_sdk.urdf.xacro by
++                               make_rh56e2_patch.py so the sim and the model MoveIt plans
++                               against cannot drift. right_hand_palm_link is an empty frame at the
++                               flange, as in the URDF, and is what grasp_weld welds to. Masses are
++                               scaled to 0.170 kg per hand; the patch header says why.
++                               The wrist inertial above is the URDF's own again. -->
++                          <body name="right_hand_palm_link" pos="0.0415 -0.003 0">
++                            <body name="right_dex5_base_link" pos="0 0 0" quat="0.500000013 -0.5 -0.499999987 0.5">
++                              <inertial pos="0.0005853065 4.36854348e-08 -0.0188226626" mass="0.0196996721" fullinertia="6.10001181e-06 5.86186493e-06 7.98683296e-06 1.04657683e-11 -8.67805392e-09 2.31657257e-12" />
++                              <geom class="rh56e2_visual" mesh="right_dex5_base_link" rgba="1 1 1 1" />
++                              <geom class="rh56e2_collision" mesh="right_dex5_base_link" />
++                              <body name="right_plam_1" pos="0 0 -0.0305" quat="3.6732051e-06 -1 0 0">
++                                <inertial pos="-0.00625 0.00223 0.0689" mass="0.084012535" fullinertia="0.000120198083 8.7633002e-05 4.92964507e-05 -9.68431503e-07 6.53569674e-06 2.09490034e-06" />
++                                <geom class="rh56e2_visual" mesh="right_plam_1" rgba="0.25 0.25 0.25 1" />
++                                <geom class="rh56e2_collision" mesh="right_plam_1" />
++                                <body name="right_plam_2" pos="0 0 0">
++                                  <inertial pos="-0.0282100608 0.000132227033 0.0839719056" mass="0.00448821656" fullinertia="5.20231249e-06 2.79749639e-06 2.6351244e-06 -2.55142928e-09 -1.21391738e-08 2.43784335e-08" />
++                                  <geom class="rh56e2_visual" mesh="right_plam_2" rgba="1 1 1 1" />
++                                  <geom class="rh56e2_collision" mesh="right_plam_2" />
++                                </body>
++                                <body name="right_plam_force_sensor" pos="0.012296 0.00036819 0.089101" quat="0.499998163 0.5 0.500001837 0.5">
++                                  <inertial pos="0.000120426999 0.000717269735 -0.00069289349" mass="0.000527267937" fullinertia="3.92332077e-08 1.09864039e-07 1.48854731e-07 7.7261206e-11 -4.5092135e-11 -9.26565416e-11" />
++                                  <geom class="rh56e2_visual" mesh="right_plam_force_sensor" rgba="0.25 0.25 0.25 1" />
++                                </body>
++                              </body>
++                              <body name="right_thumb_1" pos="0.02101 -0.0269 -0.0826" quat="3.6732051e-06 1 0 0">
++                                <inertial pos="0.00067 0.00494 -0.00671" mass="0.00336426622" fullinertia="2.1435651e-07 1.47427968e-07 1.89027109e-07 -1.35643187e-08 -1.0725377e-09 -7.94334556e-09" />
++                                <joint name="right_thumb_1_joint" axis="0 0 -1" range="0 1.658" class="rh56e2_motor" />
++                                <geom class="rh56e2_visual" mesh="right_thumb_1" rgba="1 1 1 1" />
++                                <geom class="rh56e2_collision" mesh="right_thumb_1" />
++                                <body name="right_thumb_2" pos="0.013438 0.012862 -0.0076" quat="0.499998163 0.5 -0.500001837 -0.5">
++                                  <inertial pos="-0.03301 0.01346 0.00542" mass="0.024151798" fullinertia="4.37091509e-06 7.36834497e-06 9.26926264e-06 2.45921076e-06 -8.6822146e-07 2.6820228e-07" />
++                                  <joint name="right_thumb_2_joint" axis="0.173649561 0 -0.984807509" range="0 0.62" class="rh56e2_motor" />
++                                  <geom class="rh56e2_visual" mesh="right_thumb_2" rgba="0.25 0.25 0.25 1" />
++                                  <geom class="rh56e2_collision" mesh="right_thumb_2" />
++                                  <body name="right_thumb_3" pos="-0.052954 0.032799 -0.0093372">
++                                    <inertial pos="-0.01108 0.00155 0.01153" mass="0.00389396852" fullinertia="6.77128074e-07 5.63828693e-07 7.2834941e-07 8.56300969e-08 2.83018623e-09 -1.66571672e-09" />
++                                    <joint name="right_thumb_3_joint" axis="0.173649561 0 -0.984807509" range="0 0.541052068" class="rh56e2_motor" />
++                                    <geom class="rh56e2_visual" mesh="right_thumb_3" rgba="0.25 0.25 0.25 1" />
++                                    <geom class="rh56e2_collision" mesh="right_thumb_3" />
++                                    <body name="right_thumb_force_sensor_2" pos="-0.0080057 0.016443 0.0096921" quat="0.67351428 -0.372329926 0.560997419 0.305009569">
++                                      <inertial pos="6.77003975e-05 -0.000236985203 -0.000558267741" mass="2.60526408e-05" fullinertia="2.23799169e-10 2.18237288e-10 4.3572404e-10 -1.4755164e-13 2.50089304e-13 1.78692981e-12" />
++                                      <geom class="rh56e2_visual" mesh="right_thumb_force_sensor_2" rgba="0.25 0.25 0.25 1" />
++                                    </body>
++                                    <body name="right_thumb_4" pos="-0.01865 0.013373 -0.0022731">
++                                      <inertial pos="-0.01264 0.00773 0.0105" mass="0.00167666098" fullinertia="2.52431598e-07 1.25935626e-07 2.53751476e-07 3.62758518e-08 -8.75540982e-12 -1.53219672e-11" />
++                                      <joint name="right_thumb_4_joint" axis="0.173649561 0 -0.984807509" range="0 0.455530935" class="rh56e2_motor" />
++                                      <geom class="rh56e2_visual" mesh="right_thumb_4" rgba="0.25 0.25 0.25 1" />
++                                      <geom class="rh56e2_collision" mesh="right_thumb_4" />
++                                      <body name="right_thumb_force_sensor_3" pos="-0.0076345 0.020486 0.0088067" quat="0.727040943 -0.241283101 0.610080927 0.2024727">
++                                        <inertial pos="-2.5107149e-07 -0.00069665815 -0.00042510202" mass="3.71872532e-05" fullinertia="8.57365248e-10 3.10562127e-10 1.15905306e-09 5.07715565e-15 -6.05524133e-14 3.78563563e-11" />
++                                        <geom class="rh56e2_visual" mesh="right_thumb_force_sensor_3" rgba="0.25 0.25 0.25 1" />
++                                      </body>
++                                      <body name="right_thumb_force_sensor_4" pos="-0.01883 0.027914 0.0068326" quat="0.490906495 -0.588061895 0.411810283 0.493564901">
++                                        <inertial pos="-1.51405731e-06 0.000421607187 -0.0007519763" mass="3.65519109e-06" fullinertia="4.94184779e-12 5.05131352e-12 9.4479065e-12 5.46002636e-16 1.15988753e-15 -3.81730461e-14" />
++                                        <geom class="rh56e2_visual" mesh="right_thumb_force_sensor_4" rgba="0.25 0.25 0.25 1" />
++                                      </body>
++                                    </body>
++                                  </body>
++                                  <body name="right_thumb_force_sensor_1" pos="-0.023424 0.033251 0.007073" quat="0.639161708 -0.398927881 0.55127844 0.358358673">
++                                    <inertial pos="0.000311386521 -9.39437135e-05 -0.000511449075" mass="5.12948534e-05" fullinertia="1.49261889e-09 6.39948734e-10 2.12075903e-09 -3.49235227e-11 3.76903868e-12 3.93994622e-11" />
++                                    <geom class="rh56e2_visual" mesh="right_thumb_force_sensor_1" rgba="0.25 0.25 0.25 1" />
++                                  </body>
++                                </body>
++                              </body>
++                              <body name="right_index_1" pos="0.00056467 -0.038679 -0.1564" quat="0.694659418 -0.719338789 0 0">
++                                <inertial pos="0.00132 0.01078 0.00805" mass="0.00409096524" fullinertia="7.87903708e-07 2.63982173e-07 8.31078822e-07 -9.11569494e-08 -3.63349508e-10 -1.37897705e-10" />
++                                <joint name="right_index_1_joint" axis="0 0 -1" range="0 1.4381" class="rh56e2_motor" />
++                                <geom class="rh56e2_visual" mesh="right_index_1" rgba="0.25 0.25 0.25 1" />
++                                <geom class="rh56e2_collision" mesh="right_index_1" />
++                                <body name="right_index_2" pos="0.0034259 0.032596 0.00055">
++                                  <inertial pos="-0.00016 0.0177 0.008" mass="0.00241211541" fullinertia="5.08218708e-07 9.04871605e-08 5.30542814e-07 -1.23512566e-07 1.96996721e-11 8.53652458e-11" />
++                                  <joint name="right_index_2_joint" axis="0 0 -1" range="0 1.476374" class="rh56e2_motor" />
++                                  <geom class="rh56e2_visual" mesh="right_index_2" rgba="0.25 0.25 0.25 1" />
++                                  <geom class="rh56e2_collision" mesh="right_index_2" />
++                                  <body name="right_index_force_sensor_2" pos="0.0081655 0.037446 0.0060795" quat="0.698536363 0.135589982 0.693985176 -0.109758285">
++                                    <inertial pos="3.9110579e-06 0.000206428507 -0.000722888657" mass="5.59795641e-05" fullinertia="1.05038355e-09 5.33990023e-10 1.55971133e-09 -1.89133577e-11 -3.29050442e-13 -6.6788991e-12" />
++                                    <geom class="rh56e2_visual" mesh="right_index_force_sensor_2" rgba="0.25 0.25 0.25 1" />
++                                  </body>
++                                  <body name="right_index_force_sensor_3" pos="0.0086237 0.052572 0.0060954" quat="0.658742685 -0.226724563 0.669773138 0.257017492">
++                                    <inertial pos="-2.48722058e-05 -0.000345285689 -0.00133800038" mass="1.48764697e-05" fullinertia="2.88873412e-11 5.54721173e-11 6.1404648e-11 1.23683312e-12 1.70537243e-13 1.99666697e-12" />
++                                    <geom class="rh56e2_visual" mesh="right_index_force_sensor_3" rgba="0.25 0.25 0.25 1" />
++                                  </body>
++                                </body>
++                                <body name="right_index_force_sensor_1" pos="0.012046 0.019649 0.006651" quat="0.701686363 -0.062287287 0.704358119 0.0873852539">
++                                  <inertial pos="4.50639917e-06 0.000116571661 -0.000567443127" mass="4.43853886e-05" fullinertia="7.39895166e-10 4.29918419e-10 1.15588862e-09 -1.10458325e-11 -4.72139227e-14 -1.1999187e-12" />
++                                  <geom class="rh56e2_visual" mesh="right_index_force_sensor_1" rgba="0.25 0.25 0.25 1" />
++                                </body>
++                              </body>
++                              <body name="right_middle_1" pos="0.00056467 -0.0171 -0.157" quat="0.707105483 -0.70710808 0 0">
++                                <inertial pos="0.00137 0.01101 0.00806" mass="0.00408439868" fullinertia="7.8654443e-07 2.62723583e-07 8.28533187e-07 -8.76832405e-08 -3.58971803e-10 -2.64851147e-10" />
++                                <joint name="right_middle_1_joint" axis="0 0 -1" range="0 1.4381" class="rh56e2_motor" />
++                                <geom class="rh56e2_visual" mesh="right_middle_1" rgba="0.25 0.25 0.25 1" />
++                                <geom class="rh56e2_collision" mesh="right_middle_1" />
++                                <body name="right_middle_2" pos="0.0034259 0.032596 0.00055">
++                                  <inertial pos="0.0019 0.02314 0.00802" mass="0.00386770229" fullinertia="1.01503217e-06 2.149672e-07 1.09522516e-06 -2.95851865e-07 6.39144917e-10 2.51936918e-09" />
++                                  <joint name="right_middle_2_joint" axis="0 0 -1" range="0 1.476374" class="rh56e2_motor" />
++                                  <geom class="rh56e2_visual" mesh="right_middle_2" rgba="0.25 0.25 0.25 1" />
++                                  <geom class="rh56e2_collision" mesh="right_middle_2" />
++                                  <body name="right_middle_force_sensor_2" pos="0.0090859 0.040963 0.0061003" quat="0.694853557 0.131059901 0.694856109 -0.131060383">
++                                    <inertial pos="-3.55652628e-07 2.88666331e-05 -0.00072223549" mass="5.74778021e-05" fullinertia="1.10367646e-09 5.62114495e-10 1.64068377e-09 8.68158987e-14 -7.13656691e-15 7.74276369e-13" />
++                                    <geom class="rh56e2_visual" mesh="right_middle_force_sensor_2" rgba="0.25 0.25 0.25 1" />
++                                  </body>
++                                  <body name="right_middle_force_sensor_3" pos="0.0098294 0.056051 0.0061006" quat="0.667290497 -0.233926391 0.667292948 0.233927251">
++                                    <inertial pos="6.04731044e-08 -0.000365445346 -0.00127683946" mass="1.4553999e-05" fullinertia="2.78482805e-11 5.33404004e-11 6.03850045e-11 2.19928432e-15 1.87777412e-15 1.66631427e-12" />
++                                    <geom class="rh56e2_visual" mesh="right_middle_force_sensor_3" rgba="0.25 0.25 0.25 1" />
++                                  </body>
++                                </body>
++                                <body name="right_middle_force_sensor_1" pos="0.012046 0.019649 0.006651" quat="0.703133315 -0.0748445387 0.703135898 0.0748448137">
++                                  <inertial pos="3.42843697e-07 0.00011665751 -0.000567442696" mass="4.43854162e-05" fullinertia="7.4028831e-10 4.29525532e-10 1.15588885e-09 4.10562124e-14 -4.36998311e-15 -1.20076191e-12" />
++                                  <geom class="rh56e2_visual" mesh="right_middle_force_sensor_1" rgba="0.25 0.25 0.25 1" />
++                                </body>
++                              </body>
++                              <body name="right_ring_1" pos="0.00056467 0.0045302 -0.15683" quat="0.725386916 -0.688341356 0 0">
++                                <inertial pos="0.00119 0.01036 0.00861" mass="0.00409096524" fullinertia="7.90090371e-07 2.63334272e-07 8.29470016e-07 -8.47633114e-08 -4.80453114e-09 -2.98975357e-08" />
++                                <joint name="right_ring_1_joint" axis="0 0 -1" range="0 1.4381" class="rh56e2_motor" />
++                                <geom class="rh56e2_visual" mesh="right_ring_1" rgba="0.25 0.25 0.25 1" />
++                                <geom class="rh56e2_collision" mesh="right_ring_1" />
++                                <body name="right_ring_2" pos="0.0034259 0.032596 0.00055">
++                                  <inertial pos="-0.00057 0.01725 0.00891" mass="0.00241211541" fullinertia="5.13747749e-07 8.644435e-08 5.29314867e-07 -1.13732774e-07 -5.91427934e-09 -2.3350678e-08" />
++                                  <joint name="right_ring_2_joint" axis="0 0 -1" range="0 1.476374" class="rh56e2_motor" />
++                                  <geom class="rh56e2_visual" mesh="right_ring_2" rgba="0.25 0.25 0.25 1" />
++                                  <geom class="rh56e2_collision" mesh="right_ring_2" />
++                                  <body name="right_ring_force_sensor_2" pos="0.0081655 0.037446 0.0060795" quat="0.692694078 0.103257265 0.699527011 -0.142038066">
++                                    <inertial pos="-1.52436836e-05 0.000205901967 -0.000722888421" mass="5.59795635e-05" fullinertia="1.04943656e-09 5.34936947e-10 1.55971123e-09 2.90827545e-11 2.9155448e-13 -6.68064986e-12" />
++                                    <geom class="rh56e2_visual" mesh="right_ring_force_sensor_2" rgba="0.25 0.25 0.25 1" />
++                                  </body>
++                                  <body name="right_ring_force_sensor_3" pos="0.0086237 0.052572 0.0060954" quat="0.67229984 -0.264487394 0.655779341 0.219118232">
++                                    <inertial pos="1.45479882e-05 -0.000345868483 -0.00133799622" mass="1.48765443e-05" fullinertia="2.89515972e-11 5.54085551e-11 6.14052446e-11 -1.7970598e-12 -5.77555921e-14 2.00303253e-12" />
++                                    <geom class="rh56e2_visual" mesh="right_ring_force_sensor_3" rgba="0.25 0.25 0.25 1" />
++                                  </body>
++                                </body>
++                                <body name="right_ring_force_sensor_1" pos="0.012046 0.019649 0.006651" quat="0.704887257 -0.0936617759 0.700876287 0.0559808595">
++                                  <inertial pos="-5.90327958e-06 0.000116509446 -0.00056744326" mass="4.43853801e-05" fullinertia="7.39393353e-10 4.30420232e-10 1.15588863e-09 1.66527039e-11 5.99426871e-14 -1.19937608e-12" />
++                                  <geom class="rh56e2_visual" mesh="right_ring_force_sensor_1" rgba="0.25 0.25 0.25 1" />
++                                </body>
++                              </body>
++                              <body name="right_little_1" pos="0.00056467 0.025916 -0.15365" quat="0.743136987 -0.669139312 0 0">
++                                <inertial pos="0.00081 0.00991 0.00914" mass="0.00409096524" fullinertia="7.95569069e-07 2.62506886e-07 8.24641407e-07 -6.61821429e-08 -7.31514491e-09 -5.99067029e-08" />
++                                <joint name="right_little_1_joint" axis="0 0 -1" range="0 1.4381" class="rh56e2_motor" />
++                                <geom class="rh56e2_visual" mesh="right_little_1" rgba="0.25 0.25 0.25 1" />
++                                <geom class="rh56e2_collision" mesh="right_little_1" />
++                                <body name="right_little_2" pos="0.0034259 0.032596 0.00055">
++                                  <inertial pos="-0.00094 0.01672 0.0098" mass="0.00255220196" fullinertia="5.03298167e-07 1.01420479e-07 5.10738077e-07 -1.05178738e-07 -1.10471383e-08 -4.34268327e-08" />
++                                  <joint name="right_little_2_joint" axis="0 0 -1" range="0 1.476374" class="rh56e2_motor" />
++                                  <geom class="rh56e2_visual" mesh="right_little_2" rgba="0.25 0.25 0.25 1" />
++                                  <geom class="rh56e2_collision" mesh="right_little_2" />
++                                  <body name="right_little_force_sensor_2" pos="0.0064512 0.027683 0.0061172" quat="0.689046258 0.081420444 0.702403669 -0.158792479">
++                                    <inertial pos="1.83850808e-05 -0.0001187925 -0.00077353664" mass="6.1345953e-05" fullinertia="1.17345598e-09 6.1052487e-10 1.75339185e-09 6.36673755e-11 -9.27426505e-13 7.89594697e-12" />
++                                    <geom class="rh56e2_visual" mesh="right_little_force_sensor_2" rgba="0.25 0.25 0.25 1" />
++                                  </body>
++                                  <body name="right_little_force_sensor_3" pos="0.0063972 0.042707 0.0061154" quat="0.678772284 -0.28913267 0.645292608 0.198161388">
++                                    <inertial pos="6.36863054e-05 -0.000437236774 -0.00112814037" mass="1.33638181e-05" fullinertia="2.44259203e-11 4.754387e-11 5.51712377e-11 -3.25975902e-12 -2.59132731e-13 1.76833042e-12" />
++                                    <geom class="rh56e2_visual" mesh="right_little_force_sensor_3" rgba="0.25 0.25 0.25 1" />
++                                  </body>
++                                </body>
++                                <body name="right_little_force_sensor_1" pos="0.012046 0.019649 0.006651" quat="0.706132317 -0.112374478 0.698120457 0.0371073371">
++                                  <inertial pos="-1.2130081e-05 0.000116026903 -0.000567442994" mass="4.43853947e-05" fullinertia="7.36728328e-10 4.33085314e-10 1.15588867e-09 3.30693955e-11 1.24032879e-13 -1.19439757e-12" />
++                                  <geom class="rh56e2_visual" mesh="right_little_force_sensor_1" rgba="0.25 0.25 0.25 1" />
++                                </body>
++                              </body>
++                            </body>
++                          </body>
+                         </body>
+                       </body>
+                     </body>
+@@ -383,6 +784,44 @@
+       </body>
+     </body>
+   </worldbody>
++
++  <!-- The RH56E2's passive finger segments, from the URDF's <mimic> tags: the second
++       joint of each finger follows the first, and the thumb's last two follow its second. -->
++  <equality>
++    <joint name="left_thumb_3_joint_follows" joint1="left_thumb_3_joint" joint2="left_thumb_2_joint" polycoef="0 0.8392 0 0 0" />
++    <joint name="left_thumb_4_joint_follows" joint1="left_thumb_4_joint" joint2="left_thumb_2_joint" polycoef="0 0.747727 0 0 0" />
++    <joint name="left_index_2_joint_follows" joint1="left_index_2_joint" joint2="left_index_1_joint" polycoef="0 1.0843 0 0 0" />
++    <joint name="left_middle_2_joint_follows" joint1="left_middle_2_joint" joint2="left_middle_1_joint" polycoef="0 1.0843 0 0 0" />
++    <joint name="left_ring_2_joint_follows" joint1="left_ring_2_joint" joint2="left_ring_1_joint" polycoef="0 1.0843 0 0 0" />
++    <joint name="left_little_2_joint_follows" joint1="left_little_2_joint" joint2="left_little_1_joint" polycoef="0 1.0843 0 0 0" />
++    <joint name="right_thumb_3_joint_follows" joint1="right_thumb_3_joint" joint2="right_thumb_2_joint" polycoef="0 0.8392 0 0 0" />
++    <joint name="right_thumb_4_joint_follows" joint1="right_thumb_4_joint" joint2="right_thumb_2_joint" polycoef="0 0.747727 0 0 0" />
++    <joint name="right_index_2_joint_follows" joint1="right_index_2_joint" joint2="right_index_1_joint" polycoef="0 1.0843 0 0 0" />
++    <joint name="right_middle_2_joint_follows" joint1="right_middle_2_joint" joint2="right_middle_1_joint" polycoef="0 1.0843 0 0 0" />
++    <joint name="right_ring_2_joint_follows" joint1="right_ring_2_joint" joint2="right_ring_1_joint" polycoef="0 1.0843 0 0 0" />
++    <joint name="right_little_2_joint_follows" joint1="right_little_2_joint" joint2="right_little_1_joint" polycoef="0 1.0843 0 0 0" />
++  </equality>
++
++  <!-- Hand bodies bolted to the flange vs the wrist links they sit against. Hand-vs-hand
++       contact is already off through rh56e2_collision's bitmask. -->
++  <contact>
++    <exclude body1="left_wrist_yaw_link" body2="left_dex5_base_link" />
++    <exclude body1="left_wrist_yaw_link" body2="left_plam_1" />
++    <exclude body1="left_wrist_yaw_link" body2="left_plam_2" />
++    <exclude body1="left_wrist_yaw_link" body2="left_plam_force_sensor" />
++    <exclude body1="left_wrist_pitch_link" body2="left_dex5_base_link" />
++    <exclude body1="left_wrist_pitch_link" body2="left_plam_1" />
++    <exclude body1="left_wrist_pitch_link" body2="left_plam_2" />
++    <exclude body1="left_wrist_pitch_link" body2="left_plam_force_sensor" />
++    <exclude body1="right_wrist_yaw_link" body2="right_dex5_base_link" />
++    <exclude body1="right_wrist_yaw_link" body2="right_plam_1" />
++    <exclude body1="right_wrist_yaw_link" body2="right_plam_2" />
++    <exclude body1="right_wrist_yaw_link" body2="right_plam_force_sensor" />
++    <exclude body1="right_wrist_pitch_link" body2="right_dex5_base_link" />
++    <exclude body1="right_wrist_pitch_link" body2="right_plam_1" />
++    <exclude body1="right_wrist_pitch_link" body2="right_plam_2" />
++    <exclude body1="right_wrist_pitch_link" body2="right_plam_force_sensor" />
++  </contact>
+ 
+   <actuator>
+     <motor name="left_hip_pitch" joint="left_hip_pitch_joint" ctrlrange="-88 88" />

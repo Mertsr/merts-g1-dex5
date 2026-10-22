@@ -1,6 +1,6 @@
 /**
  * @file test_pluginlib_loading.cpp
- * @brief Verifies this package's hardware_interface plugin is discoverable via pluginlib.
+ * @brief Verifies the G1ArmSdkSystem hardware_interface plugin is discoverable via pluginlib.
  */
 
 #include <gmock/gmock.h>
@@ -9,18 +9,20 @@
 #include <pluginlib/class_loader.hpp>
 
 /**
- * @brief G1LowCmdSystem resolves through the pluginlib lookup controller_manager uses.
+ * @brief Confirms g1_hardware_interface/G1ArmSdkSystem is actually discoverable through
+ * pluginlib's ament-index plugin description lookup -- the same path controller_manager
+ * uses -- rather than merely compiling.
  *
- * Also the DT_RPATH canary: the dlopen pulls in unitree_sdk2 and its own CycloneDDS.
+ * This is the discovery proof for the plugin export wiring.
  */
-TEST(G1LowCmdSystemPluginlib, DiscoversAndInstantiates)
+TEST(G1ArmSdkSystemPluginlib, DiscoversAndInstantiates)
 {
     pluginlib::ClassLoader<hardware_interface::SystemInterface> loader(
         "hardware_interface",
         "hardware_interface::SystemInterface");
 
-    ASSERT_TRUE(loader.isClassAvailable("g1_hardware_interface/G1LowCmdSystem"));
+    ASSERT_TRUE(loader.isClassAvailable("g1_hardware_interface/G1ArmSdkSystem"));
 
-    auto instance = loader.createUniqueInstance("g1_hardware_interface/G1LowCmdSystem");
+    auto instance = loader.createUniqueInstance("g1_hardware_interface/G1ArmSdkSystem");
     ASSERT_NE(instance, nullptr);
 }

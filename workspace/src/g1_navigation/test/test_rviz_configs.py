@@ -1,8 +1,12 @@
 """The sensor display group is duplicated across two packages and must not drift.
 
 g1_bringup/config/g1_sensors.rviz and g1_navigation/config/g1_navigation.rviz are two static
-files rather than one generated at launch: they differ in Fixed Frame as well as in which
-groups exist. The price is drift, and neither package's own tests can see the pair.
+files rather than one generated at launch, because they differ in Fixed Frame as well as in
+which groups exist -- and because rewriting config at launch time has already cost this stack
+a debugging session (g1_navigation/launch/nav2.launch.py's docstring).
+
+The price of static files is drift. Neither package's own tests can see the pair, which is
+the same situation test_gait_coupling exists for.
 """
 
 import os
@@ -14,7 +18,7 @@ BRINGUP_CONFIG_DIR = os.environ["G1_BRINGUP_CONFIG_DIR"]
 NAVIGATION_CONFIG_DIR = os.environ["G1_NAVIGATION_CONFIG_DIR"]
 
 # nav2_rviz_plugins is the only non-default plugin either config may use, and only the
-# navigation one may use it: g1_bringup shipping it would mean a Nav2 dependency.
+# navigation one may use it -- g1_bringup shipping it would mean a Nav2 dependency.
 NAV2_PLUGIN_PREFIX = "nav2_rviz_plugins/"
 
 
@@ -50,7 +54,8 @@ def test_the_sensor_group_contents_are_identical(sensors, navigation):
     a = _group(sensors, "Sensors")["Displays"]
     b = _group(navigation, "Sensors")["Displays"]
     assert a == b, (
-        "the Sensors group has drifted between g1_bringup and g1_navigation; edit both or neither"
+        "the Sensors group has drifted between g1_bringup and g1_navigation; "
+        "edit both or neither"
     )
 
 

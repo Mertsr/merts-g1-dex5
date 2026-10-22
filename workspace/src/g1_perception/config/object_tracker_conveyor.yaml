@@ -1,0 +1,126 @@
+# The model-based tracker for the conveyor line (g1_bringup/mjcf/g1_conveyor_scene.xml, and the
+# real line it copies). Loaded by g1_perception/launch/object_tracker.launch.py.
+#
+# Pose strings: "<frame> x y z [roll pitch yaw]" (metres, radians, RPY about fixed axes as in
+# ROS), where <frame> is a TF frame or another tracked object's name. See README.md.
+g1_object_tracker:
+  ros__parameters:
+    # The simulator's half-resolution depth (424x240, 0.4 MB a frame): the tracker fits ~3000
+    # points a frame either way, and the full image is four times the DDS traffic. On the robot,
+    # point these at the RealSense's aligned depth (or run it at 424x240).
+    depth_topic: /camera/depth_half/image_raw
+    info_topic: /camera/depth_half/camera_info
+    # 16UC1 depth (a real RealSense) is multiplied by this to get metres; 32FC1 is metres already.
+    depth_scale: 0.001
+    # Poses are carried here between frames, so the head's motion is not mistaken for the
+    # parts'. Fixed, not on the robot.
+    world_frame: odom
+    # What g1_object_pose_source's depth_tracker source expects detections in.
+    output_frame: camera_color_optical_frame
+    # tracked/<name> frames under world_frame, for RViz. Off: a part that stops being tracked
+    # leaves frames that go stale, and move_group's planning scene monitor warns about every one
+    # of them on each update. The debug markers (~/debug/markers) show the same poses.
+    publish_tf: false
+
+    # Fitted in this order, and each one's surface is removed from the depth before the next
+    # is fitted: the pallet first, so a panel seated in a nest with 2 mm clearance is not
+    # fitted to the nest's walls.
+    objects: ["pallet", "panel"]
+
+    pallet:
+      # Swap in the scanned PLY here (model_scale 0.001 if it is in millimetres). Its frame must
+      # be the one the priors below are written for.
+      model: package://g1_perception/models/bsh_pallet.stl
+      model_scale: 1.0
+      # Where the pallet sits at index 0: its station on the line, in odom. In the simulator odom
+      # starts at the world origin, so this is the scene's conveyor_pallet body. ON THE ROBOT
+      # this is the line's position in your map, so use the map frame here (and run
+      # localization), or update it whenever odom is reset.
+      priors: ["odom 0.1741 0.6 0.762 0 0 0"]
+      # The pallet indexes along its line, so where it is along x is unknown at start-up: try
+      # the station prior every 25 mm over the travel (0.75 m in the scene).
+      prior_sweep: "x 0.0 0.75 0.025"
+      # Reported pose = model pose * this. The sim body frame IS this model's frame.
+      output_offset: "0 0 0"
+      # Where the pallet can be: on its line, anywhere along its travel, level and square to it
+      # (5 degrees). A fit anywhere else -- the tray, the floor, a rail -- is dropped and the
+      # pallet searched for again, never reported. Same caveat as the prior: odom here is the
+      # simulator's; on the robot write it in map.
+      region: "odom 0.10 1.00 0.57 0.63 0.74 0.79 5"
+      # Where a panel's BODY frame sits when seated in each nest, in the pallet's frame. Published
+      # as pallet/slot/nest_<k> on /objects; Place with surface_object_id "pallet/slot/nest_2"
+      # puts the held panel exactly there. Same measurement as the panel's nest priors below,
+      # carried from the STL frame to the body frame.
+      slots:
+        - "nest_1  0.2256 0.0 0.0755 -1.5394 0.0022 -1.5712"
+        - "nest_2  0.0750 0.0 0.0755 -1.5394 0.0022 -1.5712"
+        - "nest_3  -0.0756 0.0 0.0755 -1.5394 0.0022 -1.5712"
+        - "nest_4  -0.2262 0.0 0.0755 -1.5394 0.0022 -1.5712"
+
+    panel:
+      model: package://g1_perception/models/bsh_panel.stl
+      model_scale: 1.0
+      # Up to this many panels at once, reported as panel_1 .. panel_4 (one model, loaded once).
+      # Each takes whichever prior below verifies and no other instance holds. Pick with
+      # object_id "panel" takes the nearest one; "panel_3" a particular one.
+      instances: 4
+      # A panel the hand nudged or tipped is no longer at its resting prior: every prior is also
+      # tried 2 cm off along each axis and turned 0.2 rad (11 degrees) about each. 13 fits per
+      # prior per search, on the search thread. A panel knocked over entirely is still not found.
+      prior_jitter: "0.02 0.2"
+      # The four nests, relative to the tracked pallet: wherever the pallet is, a panel seated in
+      # nest k is here. Measured from the simulator with the panel settled in nest 1, then
+      # stepped by the 150.6 mm pitch. For a panel in the hand, add a prior on the palm frame,
+      # e.g. "right_hand_palm_link 0.0 0.0 0.05 0 0 0" -- the grasp, as the skill holds it.
+      #
+      # Then the tray beside the line (the scene's part_tray_1..4, in odom), AS THEY REST: on a
+      # flat tray a panel tips 15.8 degrees onto its clips and drops 23 mm, which put the
+      # as-authored poses outside what a prior search can pull in. Measured by settling the scene,
+      # then lowered 4 cm with the tray; re-measured with the decomposed collision (64 hulls).
+      # Several priors in view at once is fine: each instance keeps the one the depth confirms
+      # best among those no other instance holds.
+      priors:
+        - "odom 1.6415 -0.8006 0.7519 -1.2924 0.0041 -1.5617"
+        - "odom 1.7885 -0.7999 0.7528 -1.2541 -0.0052 -1.5579"
+        - "odom 1.9385 -0.7999 0.7528 -1.2541 -0.0052 -1.5579"
+        - "odom 2.0879 -0.7998 0.7528 -1.2541 -0.0052 -1.5561"
+        - "pallet 0.2715 0.0 0.0780 -1.5394 0.0022 -1.5712"
+        - "pallet 0.1209 0.0 0.0780 -1.5394 0.0022 -1.5712"
+        - "pallet -0.0297 0.0 0.0780 -1.5394 0.0022 -1.5712"
+        - "pallet -0.1803 0.0 0.0780 -1.5394 0.0022 -1.5712"
+      # The STL's frame differs from the scene's part body by the mesh refpos (0, 0.001,
+      # -0.046): report the body frame, so the skills see the same frame from this source as
+      # from simulator ground truth.
+      output_offset: "0 0.001 -0.046"
+      # Where the hand takes the panel, in its BODY frame: published as panel_N/grasp/<name> on
+      # /objects, drawn in RViz (~/debug/markers), and what Pick plans to.
+      #
+      # The pose is the point the hand pinches (the hand's pinch_frame, where thumb tip meets
+      # index tip): x along the fingers (the approach), the four fingers on the -y side, the thumb
+      # on +y, closing toward each other along y. The left hand mirrors it.
+      #
+      # edge_high: the panel's tall long edge at its middle (opposite the round boss's near edge).
+      # On the tray this edge is the panel's wall facing the robot, just behind the tray's rim,
+      # so the hand cannot come in from the side: it comes from ABOVE, fingers down, the thumb
+      # on the wall's outer (robot-facing) face and the four fingers on its inner face, pinching
+      # only the wall; then straight up. In the panel's world-aligned axes the point is
+      # x = -62 mm (6 mm inside the wall's outer face at -68), y = 0, z = +35 mm -- in the wall's
+      # top lip, which runs from z +23 to +44 mm there (measured on the STL).
+      #
+      # Pick tries this first, then tipped up to grasp_tilt_max_deg (15) about the pinch axis
+      # and leaned up to grasp_lean_max_deg (60) about the edge, nearest first, to reach; never
+      # flatter than grasp_min_descent, and the thumb and finger sides never change.
+      grasps:
+        - "edge_high  0.000 -0.035 -0.062  -1.5708 0.0 1.5708"
+
+    # Shared by every object.
+    tracking:
+      max_points: 3000        # ICP input per object per frame
+      min_ratio: 0.55         # scene points in the part's box that lie on it
+      min_coverage: 0.25      # visible model surface the depth confirms (a hand may cover some)
+      max_violation: 0.12     # visible model surface the camera sees PAST: it cannot be there
+      lost_after: 5           # bad frames in a row before searching again
+      global_after_s: 1.0     # priors alone this long, then FPFH over the whole frame as well
+      z_max: 3.0
+    model:
+      voxel: 0.003            # model sample spacing

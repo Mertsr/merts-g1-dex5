@@ -1,0 +1,77 @@
+# Parameters for the Inspire RH56E2 hands, one set per side.
+#
+# Consumed by urdf/g1_arm_sdk.urdf.xacro via xacro.load_yaml, for the same reason
+# arm_sdk_params.yaml is: Humble ros2_control plugins only see parameters that arrive as
+# <ros2_control><param> tags, never controller_manager's own YAML.
+
+# Which joints are driven, in command order. Every other joint in rh56e2_{left,right}.urdf.xacro
+# is a mimic or fixed and is not declared to ros2_control. The order is positional on the wire,
+# exactly as the Dex3's was, and the same list appears in g1_bringup/config/controllers.yaml, the
+# SRDF and g1_moveit_config/config/moveit_controllers.yaml; a drift test compares them.
+#
+# Limits are the vendor's URDF values. HardwareInfo does not carry <limit> tags, so they are
+# repeated here and the component clamps to them as a backstop against a bad command.
+# All six joints close positive on both hands.
+joints:
+  thumb_1:  { min: 0.0, max: 1.658 }    # thumb rotation toward the palm
+  thumb_2:  { min: 0.0, max: 0.62 }     # thumb flexion; drives thumb_3 and thumb_4 by mimic
+  index_1:  { min: 0.0, max: 1.4381 }
+  middle_1: { min: 0.0, max: 1.4381 }
+  ring_1:   { min: 0.0, max: 1.4381 }
+  little_1: { min: 0.0, max: 1.4381 }
+
+system:
+  # Same shape as the Dex3 component's parameters so one plugin serves both. The gains are the
+  # open item: the Dex3's 1.5 / 0.2 were taken from Unitree's own teleop path, and nothing
+  # equivalent exists for this hand. These are placeholders for simulation. Replace them with
+  # the real hand's values when the driver lands.
+  kp: 1.5
+  kd: 0.2
+  command_publish_rate: 100.0    # Hz
+  max_joint_velocity_rad_s: 3.0  # slew clamp on the commanded position
+  state_timeout_ms: 200.0        # HandState older than this blocks activation
+  # Generic hand contract on Unitree's HandCmd / HandState types. The simulator answers it, and
+  # the hardware driver, when it exists, is a node that serves the same two topics and talks
+  # Modbus (or whatever the hand speaks) on its other side. The ros2_control plugin therefore
+  # never changes between simulation and the robot.
+  cmd_topic_prefix: "/rh56e2/"
+  cmd_topic_suffix: "/cmd"
+  state_topic_prefix: "/rh56e2/"
+  state_topic_suffix: "/state"
+
+# Where each hand sits on its palm frame (`{side}_hand_palm_link`, an empty frame at the wrist
+# flange that keeps the Dex3 palm convention: x along the fingers, fingers curling toward -y on
+# the left and +y on the right).
+#
+# THESE ARE THE VALUES MOST WORTH CHECKING. The rotation is derived from the vendor's finger
+# axes, not measured: the RH56E2's fingers extend along its -z and curl toward +x, so z is
+# turned onto -x and the curl onto the Dex3 side. In both hands the thumb ends up on palm +z. If
+# the hand looks rolled or the thumb is on the wrong side in RViz, change the roll here by pi
+# before touching anything else. xyz is the flange offset: 0 puts the vendor base_link origin on
+# the palm frame, which is where the Dex3's own palm origin sat.
+mount:
+  left:  { xyz: "0 0 0", rpy: "1.5707963 0 -1.5707963" }
+  right: { xyz: "0 0 0", rpy: "-1.5707963 0 1.5707963" }
+
+# `{side}_hand_grasp_frame`: where the fingers close, expressed in the palm frame. An ESTIMATE
+# from the vendor kinematics, not a measurement. The knuckles sit 0.157 m out from the flange
+# and the palm runs back from there, so a power grasp holds the object against the palm, just
+# behind the knuckle line, and the curled fingers close over its far side: with the hand closed
+# the fingertips reach 0.065 to 0.07 m off the palm. Hence 0.13 m out and 0.032 m off the palm
+# toward the side the fingers curl to. Meshes were not available when this was written. Being a
+# frame, checking it is a matter of looking at it in RViz; the manipulation server needs no
+# change.
+grasp_frame:
+  left:  { xyz: "0.130 -0.032 0.006" }
+  right: { xyz: "0.130  0.032 0.006" }
+
+# `{side}_hand_pinch_frame`: where the thumb tip meets the index fingertip, in the palm frame,
+# with the thumb swung across (thumb_1 = 1.2, as in the SRDF's pinch_open and closed) and the
+# fingers and thumb flexing together. COMPUTED from this URDF's own finger kinematics: tips meet
+# at about 70 % of "closed", 0.177 m out, 0.077 m to the curl side and 0.034 m toward the thumb
+# side. Published grasps (g1_perception's grasps on /objects) are pinches and are planned for
+# this frame; the bounding-box power grasp keeps grasp_frame. Measured against grasp_frame the
+# difference is 4.7 / 4.5 / 2.9 cm -- what made the pinch close beside the part, not on it.
+pinch_frame:
+  left:  { xyz: "0.177 -0.077 0.034" }
+  right: { xyz: "0.177  0.077 0.034" }

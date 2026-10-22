@@ -3,146 +3,106 @@
 
 /**
  * @file approach_planner.hpp
- * @brief Where a measured object has to end up for the arm to reach it, and how fast to walk
- *        there.
+ * @brief Decides the next move when walking the base into arm's reach of a measured object.
  *
- * Proportional with a floor on the linear axes, because the gait ignores speeds inside its
- * deadband; yaw has none. All three axes run at once in one closed loop. Arrival is judged on the
- * linear axes only: heading just keeps the robot square to the surface while it closes.
+ * Separated from the node for the reason GaitShaper is: this is where the reasoning lives, and
+ * it is worth testing without a simulator, a gait, or a graph.
+ *
+ * The problem is that the gait's primitives are quantised, and quantised unevenly. Measured:
+ *
+ *   - forward is IRREDUCIBLE at about 0.29 m, whatever duration is commanded, and yaws +8 deg
+ *   - lateral resolves to about 0.035 m, with under a degree of yaw and no forward coupling
+ *   - yaw resolves to about 3.8 deg, and moves the robot 3 mm
+ *
+ * So lateral is a precision knob and forward is a sledgehammer. The arm's window is about
+ * 0.11 m wide, a third of one forward step.
+ *
+ * THE PLANNER NEVER ASKS FOR A TURN. Reachability is judged in the base frame -- where the
+ * object sits relative to the robot -- and heading is simply not part of that, so it is not an
+ * input here. The caller holds its working heading on its own during forward drives, because a
+ * forward step yaws +8 deg and an uncorrected sequence walks an arc; that aim loop is the only
+ * yaw in the skill, and it belongs to the caller, not the plan.
+ *
+ * Earlier versions planned turns as part of this decision, and each one failed differently: an
+ * oblique step throws the robot sideways for a small remainder, a turn-and-strafe hybrid burns
+ * far more pulses than strafing alone, and a terminal heading gate can deadlock the caller if it
+ * ever stops handling turns. Heading stays out of this decision entirely.
+ *
+ * Fine forward motion, which the gait cannot produce directly, is instead a forward drive that
+ * stops at zero and a reverse that takes back whatever the coast added. Reverse resolves more
+ * finely than forward does: -0.247 m/s against 0.35.
  */
 
 #include <cstdint>
-#include <optional>
 
 namespace g1_locomotion
 {
 
-enum class ApproachState : std::uint8_t
+/// What the caller should do next.
+enum class ApproachMove : std::uint8_t
 {
-    kArrived,   ///< Inside the reachable window on both linear axes.
-    kClosing,   ///< Outside it; drive at the velocity in the command.
-    kOvershot,  ///< Under the robot's own footprint, where no walk helps. Re-stage via Nav2.
+    kDone,      ///< The object is inside the reachable window.
+    kStep,      ///< On the working heading, take ONE forward pulse. Coarse: about 0.29 m.
+    kReverse,   ///< Straight back. For having come too far.
+    kStrafe,    ///< One lateral pulse; `lateral_sign` says which way.
+    kOvershot,  ///< Under the robot's own shell, where no move here helps. Re-stage through Nav2.
     kInvalid,   ///< The limits themselves are unusable.
 };
 
-/**
- * @brief Where the object should end up.
- *
- * Distances are in the horizontal plane of the base frame; the base cannot influence height.
- */
+/// Where the object should end up, and what the gait can do about it. Distances are in the
+/// horizontal plane of the base frame; the base cannot influence height.
 struct ApproachLimits
 {
-    /// Where the arm reaches, from IK at the workbench's height. target_y_m mirrors for the left
-    /// arm.
+    /// Where the object must sit in the base frame for the arm to reach it. MEASURED with
+    /// /compute_ik at the workbench cube's height: x 0.16 to 0.36 all solve, 0.38 does not.
     double target_x_m = 0.270;
     double target_y_m = -0.220;
 
-    /// How close each axis has to get; the robot coasts 25 to 37 mm after the command stops.
-    double forward_tolerance_m = 0.050;
+    /// How close each axis has to get. The forward window is the measured band with margin at
+    /// its near end, NOT a guess about how precise the base can be -- the base is not precise,
+    /// and the point of measuring the arm properly was to find out how much slack it grants.
+    double forward_tolerance_m = 0.110;
     double lateral_tolerance_m = 0.040;
 
-    /// Nearer than this the object is under the robot and no walk recovers it.
+    /// Nearer than this and the object is genuinely under the robot, where no move helps.
+    /// Everything above it is recovered by reversing, so keep it WELL below the arm band's near
+    /// end: the last centimetres of forward error are closed by deliberately overshooting and
+    /// reversing back, and a floor set near the band turns that designed move into an abort.
     double min_forward_m = 0.050;
 
-    /// Loose on purpose: it only keeps the robot roughly square to the surface.
-    double heading_tolerance_rad = 0.350;
-
-    /// How far beyond the window's far edge a stopped robot may find the object: stopped, the
-    /// pelvis settles back over the feet, so the object reads further than it did on the move.
-    double settle_slack_m = 0.040;
-
-    /// How far outside the window sideways an object may settle and be nudged in, not driven.
-    double nudge_band_m = 0.050;
+    /// More than this left and the caller may stop its forward drive early, trusting the coast.
+    /// Less, and it drives to zero and lets a reverse take back the overshoot.
+    double step_threshold_m = 0.32;
 };
 
-/**
- * @brief The velocity range the gait actually honours.
- */
-struct GaitLimits
-{
-    /// Below these the gait does not move at all.
-    double min_speed_x_mps = 0.20;
-    double min_speed_y_mps = 0.25;
-
-    /// Well inside what the policy tracks, since this runs next to furniture.
-    double max_speed_x_mps  = 0.40;
-    double max_speed_y_mps  = 0.35;
-    double max_yaw_rate_rps = 0.60;
-
-    /// Proportional gains, before the floors and ceilings clamp them.
-    double speed_per_m      = 1.0;
-    double yaw_rate_per_rad = 1.0;
-
-    /// A sideways nudge's length at the floor speed: too short to commit a stride.
-    double nudge_y_s = 0.15;
-};
-
-/**
- * @brief A short sideways pulse, for an object that settled just outside the window.
- */
-struct Nudge
-{
-    double vy_mps  = 0.0;
-    double seconds = 0.0;
-};
-
-/**
- * @brief The decision, plus the numbers behind it so a caller can log or publish them.
- */
+/// The decision, plus the numbers behind it so a caller can log or publish them.
 struct ApproachCommand
 {
-    ApproachState state = ApproachState::kInvalid;
-
-    /// Remaining error in the base frame. Positive forward means the object is too far ahead;
-    /// positive lateral means it is too far to the robot's left.
+    ApproachMove move = ApproachMove::kInvalid;
+    /// kStep: true when more than a full step remains, so the caller can stop the drive early
+    /// and let the gait coast. False means creep the last few centimetres in, stopping at zero
+    /// and letting a reverse clean up whatever the coast adds.
+    bool coarse = false;
+    /// kStrafe: +1 to strafe left, -1 to strafe right.
+    double lateral_sign = 0.0;
+    /// Remaining error in the base frame, for feedback and logging.
     double forward_error_m = 0.0;
     double lateral_error_m = 0.0;
-
-    /// Base-frame velocity to publish. Zero on every state but kClosing.
-    double vx_mps       = 0.0;
-    double vy_mps       = 0.0;
-    double yaw_rate_rps = 0.0;
 };
 
-/**
- * @brief Validates the reach window before the planner is asked to aim at it.
- *
- * @return true if these limits describe a window the planner can aim at.
- */
+/// True if these limits describe a window the planner can aim at.
 bool limitsAreUsable(const ApproachLimits& limits);
 
 /**
- * @brief Validates the gait envelope before a velocity is commanded from it.
+ * @brief Decide the next move.
+ * @param object_x_m,object_y_m  The object's position in the CURRENT base frame -- the frame
+ *        the arm works in, which is what makes the window mean reachability.
  *
- * @return true if these gait limits describe a velocity range the robot can be asked for.
+ * Forward is resolved before lateral, because a forward step is the move that yaws and drifts,
+ * and the lateral error it leaves behind is cheap to strafe out afterwards. The other order
+ * would strafe to a place the next drive walks away from.
  */
-bool gaitLimitsAreUsable(const GaitLimits& gait);
-
-/**
- * @brief Decide whether the robot has arrived and, if not, how fast to walk.
- * @param object_x_m,object_y_m The object's position in the current base frame, the frame the
- *        arm works in, so the window means reachability.
- * @param heading_error_rad Working heading minus the robot's, already wrapped to [-pi, pi].
- * @return The state and, when closing, the base-frame velocity to command.
- */
-ApproachCommand planApproach(
-    double object_x_m, double object_y_m, double heading_error_rad, const ApproachLimits& limits,
-    const GaitLimits& gait);
-
-/**
- * @brief Whether a stopped robot has the object in reach: the window, with the settle slack on
- *        its far side.
- */
-bool settledInReach(double object_x_m, double object_y_m, const ApproachLimits& limits);
-
-/**
- * @brief The sideways pulse that nudges in an object that settled in reach ahead but just
- *        outside the window sideways, at the lateral floor, toward the target.
- * @return Nothing when it is in reach already, out of reach ahead, or further out sideways than
- *         the nudge band, where a drive does better.
- */
-std::optional<Nudge> planNudge(
-    double object_x_m, double object_y_m, const ApproachLimits& limits, const GaitLimits& gait);
+ApproachCommand planApproach(double object_x_m, double object_y_m, const ApproachLimits& limits);
 
 }  // namespace g1_locomotion
 

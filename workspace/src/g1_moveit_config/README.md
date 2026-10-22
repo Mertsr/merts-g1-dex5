@@ -1,227 +1,202 @@
 # g1_moveit_config
 
-MoveIt 2 planning for the G1's two 7-DoF arms and its left Dex5 hand, layered on the controllers the
-control stack already runs. `ament_cmake`, configuration and launch only: `move_group` and
-`servo_node` are upstream.
+MoveIt 2 planning for the G1's two 7-DoF arms, layered on the `arm_trajectory_controller` that
+already drives `rt/arm_sdk`.
+
+`ament_cmake`, configuration and launch only. No nodes: `move_group` is upstream.
 
 ```mermaid
 flowchart LR
-    JS["/joint_states<br/>body + fingers"] --> MG["move_group<br/>plan + collision check"]
-    MG -- "FollowJointTrajectory" --> JTC["arm_trajectory_controller"]
-    MG -- "FollowJointTrajectory" --> HC["left_hand_controller"]
-    POL["balance policy<br/>legs + waist roll, pitch"] --> HW["G1LowCmdSystem"]
-    JTC --> HW
-    HC --> HH["G1Dex5SimSystem<br/>(simulated, left only)"]
-    HW -- "rt/lowcmd" --> SIM["unitree_mujoco<br/>(the robot on hardware)"]
-    SIM -- "rt/lowstate" --> HW
+    MG["move_group<br/>plan + collision check"] -- "FollowJointTrajectory" --> JTC["arm_trajectory_controller"]
+    MG -- "FollowJointTrajectory" --> HC["left/right_hand_controller"]
+    JTC --> HW["G1ArmSdkSystem"]
+    HC --> HH["G1HandSystem (one per hand)"]
+    HW -- "/arm_sdk" --> MS["motion_service_sim<br/>(onboard controller on hardware)"]
+    HH -- "/rh56e2/side/cmd" --> SIM["unitree_mujoco<br/>(the hand driver on hardware)"]
+    MS -- "/lowstate" --> HW
+    JS["/joint_states<br/>arms + legs + waist + fingers"] --> MG
 ```
 
 MoveIt adds no command path. It is another client of actions the controllers already serve, so
-the arm channel and each hand's topic keep exactly one writer.
-
-## Launch files
-
-| File | Starts |
-|---|---|
-| `move_group.launch.py` | `move_group`, planning against the description `robot_state_publisher` loads. With `servo:=true` (default `false`) it also starts `servo_node`, which streams onto the controller `move_group` executes through, so do not run it during a planned motion. `bringup.launch.py` sets it with `vla_execution_mode:=servo`. Nothing sim-specific. |
-| `moveit_sim.launch.py` | `g1_bringup`'s `sim.launch.py` plus `move_group`. Arguments: `headless` (`true`), `world` (`navigation`), `sensors` (`false`), `pin_pelvis` (`false`), `sim_start_delay_s` (`4.0`). |
-| `moveit_rviz.launch.py` | RViz with the MotionPlanning panel on `both_arms`. Argument: `rviz_config`, default `config/g1_moveit.rviz`. |
-
-## Config
-
-| File | Holds |
-|---|---|
-| `g1.srdf` | Planning groups, end effectors, named poses, collision matrix. |
-| `kinematics.yaml` | `pick_ik` per arm, none for `both_arms`. |
-| `joint_limits.yaml` | The velocity and acceleration limits trajectories are timed against. |
-| `moveit_controllers.yaml` | The three `FollowJointTrajectory` controllers; `moveit_manage_controllers: false`. |
-| `ompl_planning.yaml` | RRTConnect on the arm groups. |
-| `sensors_3d.yaml` | `/livox/lidar` into a 25 mm octomap. |
-| `servo.yaml` | MoveIt Servo on `both_arms`. Takes `control_msgs/JointJog` on `/servo_node/delta_joint_cmds` and `geometry_msgs/TwistStamped` on `/servo_node/delta_twist_cmds`, and streams to `/arm_trajectory_controller/joint_trajectory`. |
-
-## Arm ownership
-
-The hardware component leaves any unclaimed joint unpowered, so something always holds the arms:
-`arm_freeze_controller` until the arm is acquired, then `arm_trajectory_controller`. The acquire
-swaps the two in a single switch, so the arms are never unowned.
-[`g1_controllers`](../g1_controllers/README.md) has the full ownership table.
-
-The left Dex5 hand is a separate component, `G1Dex5SystemLeft`, on the simulated backend
-`G1Dex5SimSystem`: no DDS channel and no device. `activate_arm` brings it up after the arm,
-best-effort, so a hand that fails to activate leaves the arm usable. The right Dex5 has no component,
-controller, planning group or posture in this milestone. MoveIt still needs a state for every
-joint, so `control.launch.py` reports the right hand's six joints at zero on `/joint_states`. That is
-a placeholder, not a measurement.
+`rt/arm_sdk` and each hand's topic keep exactly one writer.
 
 ## Planning groups
 
 | Group | Joints | Chain |
 |---|---|---|
-| `left_arm` | 7 | `torso_link` to `left_dex5_base_link` |
-| `right_arm` | 7 | `torso_link` to `right_dex5_base_link` |
+| `left_arm` | 7 | `torso_link` to `left_hand_palm_link` |
+| `right_arm` | 7 | `torso_link` to `right_hand_palm_link` |
 | `both_arms` | 14 | the two above, composed |
-| `left_hand` | 6 | the active Dex5 joints (`left_thumb_1`, `left_thumb_2`, `left_index_1`, `left_middle_1`, `left_ring_1`, `left_little_1`), a tree rather than a chain. Mimic joints are not listed. |
+| `left_hand` | 6 driven | the RH56E2 fingers, a tree rather than a chain. The group also names the six mimic joints and the fixed ones, for the sake of the links; MoveIt plans only the six driven joints. |
+| `right_hand` | 6 driven | as above |
 
-`both_arms` is the only group that collision-checks one arm against the other and times a motion
-so both hands arrive together. The per-arm groups stay because a 7-DoF search is far cheaper.
+`both_arms` is what makes two-handed motion a single plan: it is the only group that
+collision-checks one arm against the other, and the only one that times a motion so both hands
+arrive together. The per-arm groups remain because a 7-DoF search is far cheaper.
 
-The hands are their own groups, never joints of an arm group: a hand is a separate device with its
-own topics and control authority. Each is its arm's `end_effector` (`left_gripper`,
-`right_gripper`), which lets `attachObject` derive touch links and RViz offer the hand as the arm's
-gripper. `test_robot_model` pins both.
+The hands are separate groups, never joints on an arm group, because they are a separate device
+reached over separate topics with separate control authority. `test_robot_model`
+pins that: no arm group may contain a finger joint. Each is listed as its arm's `end_effector`,
+which is what lets `attachObject` work out its own touch links.
 
-The arm groups are rooted at `torso_link`, not `pelvis`. `waist_freeze_controller` owns waist yaw
-and the balance policy owns waist roll and pitch, so a group spanning them would plan motion
-nothing executes.
+Groups are rooted at `torso_link`, not `pelvis`. The three waist joints belong to the onboard
+controller, so a group spanning them would plan motion this stack cannot command. Their *state*
+still matters, since it places the torso under the pelvis, which is why `motion_service_sim`
+publishes it.
 
-The planning frame is `pelvis`, because the vendored URDF's floating base is commented out and the
-SRDF declares no virtual joint. That is fine while the robot stands still to manipulate. Scene
-objects fixed in `odom` would need a virtual joint.
+The planning frame is `pelvis` — the vendored URDF's floating base is commented out upstream and
+the SRDF declares no virtual joint. Fine while the robot stands still to manipulate; scene
+objects fixed in `odom` would need a virtual joint instead.
 
 ## Named poses
 
-Set a pose from the MotionPlanning panel's goal-state dropdown, or with
-`move_group.setNamedTarget("tucked")`. Each arm pose exists for `left_arm`, `right_arm` and
-`both_arms`.
+Set from the MotionPlanning panel's goal-state dropdown, or with
+`move_group.setNamedTarget("tucked")`. Each exists for `left_arm`, `right_arm` and `both_arms`.
 
 | Pose | What it is |
 |---|---|
-| `home` | The arms' resting posture: nearly straight, angled forward, hands in front of the hips. |
-| `zero` | Every arm joint at 0: upper arms down, forearms level and pointing forward, since the elbow's zero is a right angle. |
-| `tucked` | Arms down, nearly straight, swung out clear of the hips. The posture to walk in. |
-| `ready` | Hands forward of the hips, elbows slightly bent, clear of the torso. |
-| `reach_front` | Hands out in front, just below shoulder height. |
-| `carry` | Holds a picked object low beside the body, wrist flat. The in-place trees use it between pick and place. |
+| `home` | Where the simulator actually holds the arms: shoulders back, elbows bent. Measured, not chosen. |
+| `zero` | Every arm joint at 0. Arms straight down at the sides. |
+| `tucked` | Arms in close, elbows well bent. The posture to navigate in: smallest swept volume and least COM offset. |
+| `ready` | Forearms up and forward, clear of the torso, without being extended. |
+| `reach_front` | Reaching a surface in front. The pick-and-place working posture. |
 
-`test_robot_model` checks that the three per-group copies agree, that every pose sits inside the
-joint limits, and that `tucked` and `carry` keep 0.20 rad of room before self-collision.
+Every arm value was collision-checked against a running `move_group` before being written into the
+SRDF, with the Dex3 hands on the end. **They have not been re-checked with the RH56E2 hands**,
+which are longer and heavier; the hand `open` and `closed` values were chosen from forward
+kinematics alone. `test_robot_model` pins them: the three per-group copies must agree, and all must sit
+inside the joint limits. Poses are a convenience, not a safety mechanism, and MoveIt still plans
+and collision-checks the path to one.
 
-Arm posture disturbs the gait, so manipulate standing still and walk in `tucked`. Send named poses
-one arm at a time: `both_arms` fails to execute them on this stack (see the
-[navigation and arm planning guide](../../../docs/guides/navigation-and-moveit.md)).
-
-The left Dex5 hand has three postures on `left_hand`; there is no `right_hand` group yet:
+The hands have two postures each, on `left_hand` and `right_hand`:
 
 | Pose | What it is |
 |---|---|
-| `open` | Every active finger joint at 0: fingers straight. |
-| `pinch_ready` | Thumb partway in, fingers open. |
-| `closed` | Thumb opposed and the four fingers curled to about 80 percent of their range. |
+| `open` | Every driven joint at 0. Fingers straight, thumb folded away from the palm. |
+| `closed` | A power grasp, curled short of the end stops so the fingers can press into an object. |
 
-**These values are provisional.** They are chosen from the URDF joint ranges, stay inside them
-(`test_moveit_config_drift`), and have not been checked against a grasp: the wrist mounts are zero
-placeholders and the hand meshes are not committed. The old Dex3 clearance numbers do not apply.
-`g1_manipulation`'s grasp geometry, grip check and `min_grip_height_m` were written for the Dex3 hand
-and have not been re-derived for Dex5, so pick and place is not supported on this hand yet.
+That is the whole vocabulary a pick and place needs: reach open, close, `attachObject`, move,
+place, open, `detachObject`. Contact physics is not simulated, so in sim the object is held by
+the attachment rather than by friction. On hardware it is held by both.
 
-MoveIt's attachment is planner bookkeeping, not what carries the load. The fingers hold an object
-by friction, with a simulator grasp weld as a stand-in in the navigation world
-([pick and place guide](../../../docs/guides/pick-and-place.md)).
+`tucked` is worth knowing about beyond convenience. Arm pose measurably disturbs a walking
+humanoid, and the standing recommendation is to manipulate stationary and navigate with the arms
+in.
 
 ## Kinematics
 
-`pick_ik` solves each arm. With 7 joints against a 6-DoF pose the solver picks from a null space,
-and KDL's pseudo-inverse wanders it and clamps at joint limits. Swapping back is one line in
-`config/kinematics.yaml`.
+`pick_ik` on each arm. Each arm is 7 joints against a 6-DoF pose, so the solver's choice within
+the null space is the whole question, and KDL's pseudo-inverse wanders it and clamps at joint
+limits. Swapping back is one line in `config/kinematics.yaml`.
 
-`both_arms` has no solver entry, on purpose. Chain solvers, `pick_ik` included, reject a group that
-is not a chain. MoveIt instead routes a pose goal per hand through the per-arm solvers, and builds
-that subgroup map only for groups with no solver of their own. An entry for `both_arms` silently
-breaks its IK, and `test_moveit_config_drift` asserts there is none.
+`both_arms` deliberately has **no** solver entry. pick_ik, like KDL and TRAC-IK, rejects any
+group that is not a chain; MoveIt instead routes a pose goal per hand through the per-arm
+solvers, and it only builds that subgroup map for groups with no solver of their own. Adding an
+entry for `both_arms` silently breaks its IK. A test asserts this.
 
 For two simultaneous Cartesian goals, call `setPoseTarget(pose, link)` once per hand.
 `setPoseTargets` means something else: alternative goals for one link.
 
 ## Speed
 
-`config/joint_limits.yaml` caps every arm joint at 0.8 rad/s and every finger at 2.0 rad/s. It also
-adds the acceleration limits the URDF does not declare (2.0 rad/s^2 on the arms, 5.0 on the
-fingers). Without them a plan succeeds with zero timestamps and fails only at execution.
-
-The URDF's 22 to 37 rad/s are motor limits, not what the arm tracks. `arm_trajectory_controller`
-claims position alone, so the arm runs on the component's `position_only_kp` (300 on the shoulders
-and elbows, 150 on the wrists) with no gravity compensation. It falls behind a trajectory timed
-against the motor, and the controller aborts on its goal-time tolerance.
-
-The fingers have a clamp: the simulated Dex5 backend caps every finger at
-`max_joint_velocity_rad_s` (3.0, `g1_description/config/dex5_params.yaml`), so planning faster only
-stretches the motion until the goal-time tolerance trips. `test_moveit_config_drift` keeps every
-finger limit under it. The body component
-has no such clamp, deliberately: it would throttle the fast corrections the balance policy needs.
+`config/joint_limits.yaml` caps every arm joint at 0.8 rad/s against the bridge's 1.0 rad/s slew
+clamp, and adds the acceleration limits the URDF does not declare. The URDF's own 22-37 rad/s are
+motor limits; timing a trajectory against them makes the bridge stretch it by a factor of thirty
+and the controller abort on a goal-time tolerance that looks unrelated. A test compares the two
+files.
 
 ## Running
 
-From the operator entry point:
+One command, from the operator entry point:
 
 ```bash
 ros2 launch g1_bringup bringup.launch.py moveit:=true pin_pelvis:=true rviz:=true
 ```
 
-Or this package on its own (the integration tests launch `moveit_sim.launch.py`):
+Or this package on its own, which is what the integration test launches:
 
 ```bash
 ros2 launch g1_moveit_config moveit_sim.launch.py pin_pelvis:=true
-ros2 launch g1_moveit_config moveit_rviz.launch.py   # second shell, once the stack is up
+ros2 launch g1_moveit_config moveit_rviz.launch.py
 ```
 
-`./scripts/demos/navigation-and-moveit.sh arm` launches `moveit:=true sensors:=true rviz:=true`,
-acquires the arm once the stack is up and stages the release command.
+Either route turns on the non-arm joint states for you. `move_group` will not plan until every
+joint it models has a state, and the arms hang off three waist joints `joint_state_broadcaster`
+does not own.
 
-`move_group` will not plan until every joint it models has a state; `joint_state_broadcaster`
-publishes all of them, body and fingers.
+With a navigation mode as well (`mode:=localization nav:=true moveit:=true rviz:=true`), the one
+RViz that opens is this package's — run a second `rviz2 -d` on `g1_navigation.rviz` for the map
+and costmaps. A single combined window was attempted and abandoned: every merge segfaulted rviz2
+once Nav2 was actually running.
 
-With Nav2 as well (`mode:=localization nav:=true moveit:=true rviz:=true`), `rviz:=true` opens two
-windows: this package's for the arms and `g1_navigation.rviz` for the map and costmaps. One
-combined window segfaults rviz2 once Nav2 is running.
+Planning works immediately. **Executing does not**, until the arm is acquired — the component
+first, then the controller:
 
-Planning works immediately. Execution waits until the arm is acquired with
-`ros2 launch g1_bringup activate_arm.launch.py`; release with `deactivate_arm.launch.py` on
-success or failure alike. Until then the controller refuses the goal, which is intended:
-`moveit_manage_controllers` is false, so MoveIt never activates anything itself.
+```bash
+ros2 launch g1_bringup activate_arm.launch.py
+```
+
+Until then the controller refuses the goal, which is the intended failure rather than a bug.
+`moveit_manage_controllers` is false so MoveIt never activates anything itself. Release with
+`deactivate_arm.launch.py` on success or failure alike.
+
+`waist_hold_rad:=0.35,0.0,0.0` stands the torso off-square, which is worth doing when changing
+anything about frames.
 
 ## Seeing the world
 
 `config/sensors_3d.yaml` feeds `/livox/lidar` into an octomap, so plans route around real
-obstacles. It comes up with `sensors:=true`:
+obstacles rather than only the robot itself. It comes up with `sensors:=true`:
 
 ```bash
 ros2 launch g1_moveit_config moveit_sim.launch.py sensors:=true pin_pelvis:=true world:=perception
 ```
 
-The octomap is built in the planning frame, `pelvis`; `octomap_frame` is never read. That holds
-while the pelvis is pinned or the robot stands still. A walking pelvis drags the voxel grid with it
-and the map smears. There is no time decay, so a voxel the sensor cannot currently see is never
-forgotten; `/clear_octomap` (`std_srvs/Empty`) resets the map.
+The octomap is built in the **planning frame**, `pelvis` -- `octomap_frame` exists but is never
+read, because move_group constructs the monitor with the planning frame directly. That is fine
+while the pelvis is pinned or the robot stands still; a walking pelvis drags the voxel grid with
+it and the map smears. `/clear_octomap` (`std_srvs/Empty`) resets it; there is no time decay, so
+a voxel the sensor cannot currently see is never forgotten.
 
-The updater reads the LiDAR, not the depth camera: `depth_image_proc`'s converter cannot receive
-the camera relay's best-effort images.
+The **LiDAR, not the depth camera**, and not by preference: the camera publishes a depth image,
+and `depth_image_proc`'s converter cannot receive from our best-effort relay.
 
-## Collision matrix
+## Regenerating the collision matrix
 
-The `disable_collisions` block in `config/g1.srdf` is not the Setup Assistant's:
-`collisions_updater` does not finish on this model, because 38 of the URDF's 52 collision elements
-are full visual meshes, about 525k triangles. The block holds 56 pairs, none sampled: links joined
-by a joint, links touching at rest (from `/check_state_validity`), and each hand's thumb-over-wrist
-pair, which a closing hand always touches.
+`config/g1.srdf` is hand-written except for its `disable_collisions` block. That block is
+generated, and the header inside the file records how and when. **The RH56E2 hand pairs at the
+end of the file are the exception**: they are hand-written (every pair inside one hand, plus
+the hand's base and palm against the wrist), because the hand meshes were not available. Once
+they are in, read the rest pose's contacts from `/check_state_validity` as described below and
+add whatever is reported.
 
-It contains no cross-arm pair, because `both_arms` exists to collision-check one arm against the
-other. `test_robot_model` asserts those stay enabled.
+**`collisions_updater` does not finish on this model.** Measured 2026-08-06: it was left running
+for 1 h 22 m at `--trials 10000` and produced nothing, and 1000 trials, 1 trial and
+`--default --trials 0` all failed to complete either — the expensive phase runs whatever the flags
+say. The cause is the collision geometry: 38 of the URDF's 52 collision elements are the full
+visual STL meshes, about 525k triangles.
+
+What the shipped matrix was generated from instead is the robot's own rest pose, which is all the
+"invalid start state" failure needs: link pairs joined by a joint, plus pairs found touching by
+`move_group`'s `/check_state_validity` contacts. 54 pairs, generated in seconds, and deliberately
+conservative — it disables what genuinely touches and nothing speculative. It contains no cross-arm
+pair, which matters: `both_arms` exists to collision-check one arm against the other, and
+`test_robot_model` asserts those stay enabled.
+
+The "never in collision" pairs a full sampling run would add are a planning-speed optimisation, not
+a correctness requirement. Getting them needs the collision geometry simplified first, after
+which the upstream generator becomes usable again.
 
 ## Tests
 
 | Test | Needs a simulator | Covers |
 |---|---|---|
-| `test_moveit_config_drift` | no | This package against `g1_controllers`' controller config and `g1_description`'s hand clamp, the composite-group solver rule, SRDF well-formedness and the octomap sensor config. |
-| `test_robot_model` | no | Group composition and order, planning frame, no hand or waist joints in an arm group, the left-only Dex5 hand group, the collision matrix's adjacent and cross-arm pairs, the end effectors and the named poses. |
-| `test_launch_threading` | no | The arguments `g1_bringup`'s `moveit:=true` branch threads into the simulator, the RViz choice, and what `moveit_sim.launch.py` composes. |
-| `test_octomap_blocks_a_plan` | yes | The octomap fills from the LiDAR and MoveIt collision-checks against it: a reach into a mapped obstacle is rejected, with `<octomap>` named in the contact. |
-| `test_moveit_lowcmd` | yes | MoveIt with the pelvis unpinned: every motor claimed before the acquire, the freeze traded for the trajectory controller and back, both arms moving without the balance policy losing the robot, both hands activating, and the left hand closing and opening through MoveIt. |
+| `test_moveit_config_drift` | no | This package against `g1_bringup`'s controller and `g1_description`'s speed clamp; the composite-group solver rule; SRDF well-formedness. |
+| `test_robot_model` | no | Group composition and order, planning frame, no hand or waist joints in an arm group, the collision matrix's adjacent pairs and its cross-arm pairs, and the named poses (per-group copies agree, all within joint limits). |
+| `test_launch_threading` | no | The arguments `g1_bringup`'s `moveit:=true` branch threads into the simulator, the RViz choice, and that `moveit_sim.launch.py` still composes what it did. |
+| `test_octomap_blocks_a_plan` | yes | That the octomap fills from the LiDAR **and** that MoveIt collision-checks against it: a reach into a mapped obstacle is rejected, with `<octomap>` named in the contact. |
+| `test_moveit_plan_execute` | yes | Execution refused before acquire, a coordinated `both_arms` plan, planned speed under the clamp, and hand placement with the waist turned. |
 
 ```bash
-./scripts/manage.sh test g1_moveit_config
-./scripts/manage.sh test --sim g1_moveit_config   # the suites that need a simulator
+colcon test --packages-select g1_moveit_config
 ```
-
-Untested: arm groups composing through a turned waist. Nothing stands the torso off-square, and
-`waist_freeze_controller` latches the yaw the scene starts at, so a scene with a turned waist would
-cover it.

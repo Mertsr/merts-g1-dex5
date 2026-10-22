@@ -1,0 +1,198 @@
+# The model-based tracker for world:=conveyor2 (g1_bringup/mjcf/g1_conveyor2_scene.xml): the
+# conveyor world with the BSH panels replaced by a red drink can, 66 mm across and 129 mm tall
+# (g1_bringup/tools/make_conveyor2_scene.py, from this config's model, models/coke_can.stl).
+# Everything but the part is object_tracker_conveyor.yaml unchanged.
+# bringup.launch.py picks this file by default when world:=conveyor2.
+#
+# Pose strings: "<frame> x y z [roll pitch yaw]" (metres, radians, RPY about fixed axes as in
+# ROS), where <frame> is a TF frame or another tracked object's name. See README.md.
+g1_object_tracker:
+  ros__parameters:
+    # The simulator's half-resolution depth (424x240, 0.4 MB a frame): the tracker fits ~3000
+    # points a frame either way, and the full image is four times the DDS traffic. On the robot,
+    # point these at the RealSense's aligned depth (or run it at 424x240).
+    depth_topic: /camera/depth_half/image_raw
+    info_topic: /camera/depth_half/camera_info
+    # 16UC1 depth (a real RealSense) is multiplied by this to get metres; 32FC1 is metres already.
+    depth_scale: 0.001
+    # Poses are carried here between frames, so the head's motion is not mistaken for the
+    # parts'. Fixed, not on the robot.
+    world_frame: odom
+    # What g1_object_pose_source's depth_tracker source expects detections in.
+    output_frame: camera_color_optical_frame
+    # tracked/<name> frames under world_frame, for RViz. Off: a part that stops being tracked
+    # leaves frames that go stale, and move_group's planning scene monitor warns about every one
+    # of them on each update. The debug markers (~/debug/markers) show the same poses.
+    publish_tf: false
+
+    # Fitted in this order, and each one's surface is removed from the depth before the next
+    # is fitted: the pallet first, so a part standing in a nest is not fitted to the pallet.
+    objects: ["pallet", "can"]
+
+    pallet:
+      # Swap in the scanned PLY here (model_scale 0.001 if it is in millimetres). Its frame must
+      # be the one the priors below are written for.
+      model: package://g1_perception/models/bsh_pallet.stl
+      model_scale: 1.0
+      # Where the pallet sits at index 0: its station on the line, in odom. In the simulator odom
+      # starts at the world origin, so this is the scene's conveyor_pallet body. ON THE ROBOT
+      # this is the line's position in your map, so use the map frame here (and run
+      # localization), or update it whenever odom is reset.
+      priors: ["odom 0.1741 0.6 0.762 0 0 0"]
+      # The pallet indexes along its line, so where it is along x is unknown at start-up: try
+      # the station prior every 25 mm over the travel (0.75 m in the scene).
+      prior_sweep: "x 0.0 0.75 0.025"
+      # Reported pose = model pose * this. The sim body frame IS this model's frame.
+      output_offset: "0 0 0"
+      # Where the pallet can be: on its line, anywhere along its travel, level and square to it
+      # (5 degrees). A fit anywhere else -- the tray, the floor, a rail -- is dropped and the
+      # pallet searched for again, never reported. Same caveat as the prior: odom here is the
+      # simulator's; on the robot write it in map.
+      region: "odom 0.10 1.00 0.57 0.63 0.74 0.79 5"
+      # Where the part's BODY frame sits when placed in each nest, in the pallet's frame. Published
+      # as pallet/slot/nest_<k> on /objects; Place with surface_object_id "pallet/slot/nest_2"
+      # puts the held can exactly there.
+      slots:
+        # The can standing on the pallet plate (top z 0.01) at each nest's centre, between its
+        # end cradles: its origin (52.3 mm above its bottom) at pallet z 0.0622, inside the nest
+        # site the simulator's conveyor handler watches, so a placed can indexes the pallet.
+        # Measured by dropping the can into nest 1 in the simulator; the others are the nest
+        # sites' x. The can is round, so Place stands it in whichever turn suits the hand.
+        - "nest_1  0.2259 0.0 0.0622 0 0 0"
+        - "nest_2  0.0753 0.0 0.0622 0 0 0"
+        - "nest_3  -0.0753 0.0 0.0622 0 0 0"
+        - "nest_4  -0.2259 0.0 0.0622 0 0 0"
+
+    can:
+      model: package://g1_perception/models/coke_can.stl
+      model_scale: 1.0
+      instances: 4
+      prior_jitter: "0.02 0.2"
+      # Round about its own axis: whatever yaw a fit settles on is meaningless, so the can is
+      # reported turned to face odom's +x (and says so, "can_N/symmetric/z", for Place). Its
+      # grasps below are therefore fixed in odom, not spun about by the fit.
+      symmetric_z: true
+      # The tray's part_tray_1..4 as they rest (standing on the floor, top z 0.71; origin 52.3 mm
+      # above the bottom), then the four nests relative to the tracked pallet. Measured by
+      # settling the scene. The model's frame IS the body frame, so no output offset.
+      priors:
+        - "odom 1.605 -0.80 0.7622 0 0 0"
+        - "odom 1.755 -0.80 0.7622 0 0 0"
+        - "odom 1.905 -0.80 0.7622 0 0 0"
+        - "odom 2.055 -0.80 0.7622 0 0 0"
+        - "pallet 0.2259 0.0 0.0622 0 0 0"
+        - "pallet 0.0753 0.0 0.0622 0 0 0"
+        - "pallet -0.0753 0.0 0.0622 0 0 0"
+        - "pallet -0.2259 0.0 0.0622 0 0 0"
+      output_offset: "0 0 0"
+      # side_<hand>_t<tilt>_<deg>: the can held like a bottle, from the side: the palm against
+      # it, the four fingers wrapped round its far side and the thumb swung across behind it.
+      # The right hand takes it on its right side, the left hand on its left (the name says
+      # which; Pick gives each grasp only to that hand), fingers pointing <deg> from the can's
+      # +x, i.e. odom +x at 0. Pick tries only those whose fingers point away from the robot
+      # (side_grasp_min_forward), comes down onto the can from above, beside it, in g1.srdf's
+      # "side_open", closes to "side_closed" and lifts straight up.
+      #
+      # Pinch frame as usual (x along the fingers; y toward the curl side for the right hand):
+      # 32 mm along the fingers past the can's axis, 28.5 mm off it on the curl side, 45 mm above
+      # the can's origin (the top of the hand near the can's top), and the fingers tipped <tilt>
+      # degrees down, the hand turned about the line through the can's axis along the palm's
+      # normal. Not level: a level hand this low (the tray's cans stand with their tops at the
+      # pelvis) is past the G1 wrist's reach anywhere in front of the robot; tipped 10-15
+      # degrees it reaches cans 0.14-0.35 m ahead of the pelvis and up to 0.3 m to the side,
+      # tipped 25 degrees up to about 0.45 m ahead (no orientation gets the hand past that at
+      # this height). Pick tries the least tipped first.
+      #
+      # The left hand is the mirror image, on the can's other side. Pick gives the left hand a
+      # published grasp turned half a turn about x (right for a pinch, where that only swaps
+      # thumb and fingers), so side_left_* are published already turned (roll pi).
+      #
+      # Found in MuJoCo with the RH56E2's real finger pads and the simulator's hand gains (kp
+      # 1.5, 1 N m): from 18 cm above, both hands come down without touching the can, close
+      # round it (palm, all four fingers and the thumb in contact) and lift it 10 cm, the can
+      # settling 15-22 degrees off vertical in the hand at 10-15, 29 at 25 (it follows the tipped hand).
+      grasps:
+        - "side_right_t10_000  0.0315 0.0285 0.0394  0.0000 0.1745 0.0000"
+        - "side_right_t10_030  0.0130 0.0404 0.0394  -0.0000 0.1745 0.5236"
+        - "side_right_t10_060  -0.0089 0.0415 0.0394  0.0000 0.1745 1.0472"
+        - "side_right_t10_090  -0.0285 0.0315 0.0394  0.0000 0.1745 1.5708"
+        - "side_right_t10_120  -0.0404 0.0130 0.0394  0.0000 0.1745 2.0944"
+        - "side_right_t10_150  -0.0415 -0.0089 0.0394  0.0000 0.1745 2.6180"
+        - "side_right_t10_180  -0.0315 -0.0285 0.0394  0.0000 0.1745 3.1416"
+        - "side_right_t10_210  -0.0130 -0.0404 0.0394  0.0000 0.1745 -2.6180"
+        - "side_right_t10_240  0.0089 -0.0415 0.0394  0.0000 0.1745 -2.0944"
+        - "side_right_t10_270  0.0285 -0.0315 0.0394  0.0000 0.1745 -1.5708"
+        - "side_right_t10_300  0.0404 -0.0130 0.0394  -0.0000 0.1745 -1.0472"
+        - "side_right_t10_330  0.0415 0.0089 0.0394  -0.0000 0.1745 -0.5236"
+        - "side_right_t15_000  0.0309 0.0285 0.0367  0.0000 0.2618 0.0000"
+        - "side_right_t15_030  0.0125 0.0401 0.0367  -0.0000 0.2618 0.5236"
+        - "side_right_t15_060  -0.0092 0.0410 0.0367  -0.0000 0.2618 1.0472"
+        - "side_right_t15_090  -0.0285 0.0309 0.0367  -0.0000 0.2618 1.5708"
+        - "side_right_t15_120  -0.0401 0.0125 0.0367  0.0000 0.2618 2.0944"
+        - "side_right_t15_150  -0.0410 -0.0092 0.0367  0.0000 0.2618 2.6180"
+        - "side_right_t15_180  -0.0309 -0.0285 0.0367  0.0000 0.2618 3.1416"
+        - "side_right_t15_210  -0.0125 -0.0401 0.0367  0.0000 0.2618 -2.6180"
+        - "side_right_t15_240  0.0092 -0.0410 0.0367  0.0000 0.2618 -2.0944"
+        - "side_right_t15_270  0.0285 -0.0309 0.0367  0.0000 0.2618 -1.5708"
+        - "side_right_t15_300  0.0401 -0.0125 0.0367  0.0000 0.2618 -1.0472"
+        - "side_right_t15_330  0.0410 0.0092 0.0367  0.0000 0.2618 -0.5236"
+        - "side_right_t25_000  0.0290 0.0285 0.0315  0.0000 0.4363 0.0000"
+        - "side_right_t25_030  0.0109 0.0392 0.0315  0.0000 0.4363 0.5236"
+        - "side_right_t25_060  -0.0102 0.0394 0.0315  0.0000 0.4363 1.0472"
+        - "side_right_t25_090  -0.0285 0.0290 0.0315  -0.0000 0.4363 1.5708"
+        - "side_right_t25_120  -0.0392 0.0109 0.0315  0.0000 0.4363 2.0944"
+        - "side_right_t25_150  -0.0394 -0.0102 0.0315  0.0000 0.4363 2.6180"
+        - "side_right_t25_180  -0.0290 -0.0285 0.0315  0.0000 0.4363 3.1416"
+        - "side_right_t25_210  -0.0109 -0.0392 0.0315  0.0000 0.4363 -2.6180"
+        - "side_right_t25_240  0.0102 -0.0394 0.0315  0.0000 0.4363 -2.0944"
+        - "side_right_t25_270  0.0285 -0.0290 0.0315  0.0000 0.4363 -1.5708"
+        - "side_right_t25_300  0.0392 -0.0109 0.0315  -0.0000 0.4363 -1.0472"
+        - "side_right_t25_330  0.0394 0.0102 0.0315  0.0000 0.4363 -0.5236"
+        - "side_left_t10_000  0.0315 -0.0285 0.0394  3.1416 0.1745 0.0000"
+        - "side_left_t10_030  0.0415 -0.0089 0.0394  3.1416 0.1745 0.5236"
+        - "side_left_t10_060  0.0404 0.0130 0.0394  3.1416 0.1745 1.0472"
+        - "side_left_t10_090  0.0285 0.0315 0.0394  3.1416 0.1745 1.5708"
+        - "side_left_t10_120  0.0089 0.0415 0.0394  3.1416 0.1745 2.0944"
+        - "side_left_t10_150  -0.0130 0.0404 0.0394  3.1416 0.1745 2.6180"
+        - "side_left_t10_180  -0.0315 0.0285 0.0394  3.1416 0.1745 3.1416"
+        - "side_left_t10_210  -0.0415 0.0089 0.0394  -3.1416 0.1745 -2.6180"
+        - "side_left_t10_240  -0.0404 -0.0130 0.0394  3.1416 0.1745 -2.0944"
+        - "side_left_t10_270  -0.0285 -0.0315 0.0394  3.1416 0.1745 -1.5708"
+        - "side_left_t10_300  -0.0089 -0.0415 0.0394  3.1416 0.1745 -1.0472"
+        - "side_left_t10_330  0.0130 -0.0404 0.0394  3.1416 0.1745 -0.5236"
+        - "side_left_t15_000  0.0309 -0.0285 0.0367  3.1416 0.2618 0.0000"
+        - "side_left_t15_030  0.0410 -0.0092 0.0367  3.1416 0.2618 0.5236"
+        - "side_left_t15_060  0.0401 0.0125 0.0367  3.1416 0.2618 1.0472"
+        - "side_left_t15_090  0.0285 0.0309 0.0367  3.1416 0.2618 1.5708"
+        - "side_left_t15_120  0.0092 0.0410 0.0367  -3.1416 0.2618 2.0944"
+        - "side_left_t15_150  -0.0125 0.0401 0.0367  3.1416 0.2618 2.6180"
+        - "side_left_t15_180  -0.0309 0.0285 0.0367  3.1416 0.2618 3.1416"
+        - "side_left_t15_210  -0.0410 0.0092 0.0367  3.1416 0.2618 -2.6180"
+        - "side_left_t15_240  -0.0401 -0.0125 0.0367  -3.1416 0.2618 -2.0944"
+        - "side_left_t15_270  -0.0285 -0.0309 0.0367  -3.1416 0.2618 -1.5708"
+        - "side_left_t15_300  -0.0092 -0.0410 0.0367  3.1416 0.2618 -1.0472"
+        - "side_left_t15_330  0.0125 -0.0401 0.0367  3.1416 0.2618 -0.5236"
+        - "side_left_t25_000  0.0290 -0.0285 0.0315  3.1416 0.4363 0.0000"
+        - "side_left_t25_030  0.0394 -0.0102 0.0315  3.1416 0.4363 0.5236"
+        - "side_left_t25_060  0.0392 0.0109 0.0315  3.1416 0.4363 1.0472"
+        - "side_left_t25_090  0.0285 0.0290 0.0315  3.1416 0.4363 1.5708"
+        - "side_left_t25_120  0.0102 0.0394 0.0315  3.1416 0.4363 2.0944"
+        - "side_left_t25_150  -0.0109 0.0392 0.0315  3.1416 0.4363 2.6180"
+        - "side_left_t25_180  -0.0290 0.0285 0.0315  3.1416 0.4363 3.1416"
+        - "side_left_t25_210  -0.0394 0.0102 0.0315  -3.1416 0.4363 -2.6180"
+        - "side_left_t25_240  -0.0392 -0.0109 0.0315  -3.1416 0.4363 -2.0944"
+        - "side_left_t25_270  -0.0285 -0.0290 0.0315  3.1416 0.4363 -1.5708"
+        - "side_left_t25_300  -0.0102 -0.0394 0.0315  3.1416 0.4363 -1.0472"
+        - "side_left_t25_330  0.0109 -0.0392 0.0315  3.1416 0.4363 -0.5236"
+
+    # Shared by every object.
+    tracking:
+      max_points: 3000        # ICP input per object per frame
+      min_ratio: 0.55         # scene points in the part's box that lie on it
+      min_coverage: 0.25      # visible model surface the depth confirms (a hand may cover some)
+      max_violation: 0.12     # visible model surface the camera sees PAST: it cannot be there
+      lost_after: 5           # bad frames in a row before searching again
+      global_after_s: 1.0     # priors alone this long, then FPFH over the whole frame as well
+      z_max: 3.0
+    model:
+      voxel: 0.003            # model sample spacing

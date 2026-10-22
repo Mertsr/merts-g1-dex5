@@ -1,8 +1,3 @@
-/**
- * @file clear_octomap.cpp
- * @brief Ports and tick for the ClearOctomap leaf.
- */
-
 #include "g1_orchestration/skills/clear_octomap.hpp"
 
 #include <memory>
@@ -29,7 +24,7 @@ BT::PortsList ClearOctomap::providedPorts()
     };
 }
 
-BT::NodeStatus ClearOctomap::call()
+BT::NodeStatus ClearOctomap::tick()
 {
     const double      timeout_s = getInput<double>("timeout_s").value_or(5.0);
     const std::string service   = getInput<std::string>("service").value_or("");

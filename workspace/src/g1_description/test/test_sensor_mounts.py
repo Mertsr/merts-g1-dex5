@@ -1,11 +1,12 @@
 """
 The sensor mounts exist twice, and copies drift.
 
-The simulator's `simulate/src/sensor_publisher.cc` (submodule `workspace/vendor/unitree_mujoco`)
-carries the LiDAR mount as `kMountXyz`/`kMountRpy` compile-time constants, because the simulator
-links no ROS and cannot ask TF where the sensor is; the cameras it reads from config/cameras.yaml,
-whose head entry mirrors Unitree's d435_joint. Move one copy and not the other, and the data
-arrives in a frame that does not describe where it was taken.
+`workspace/vendor/unitree_mujoco/sensor_publisher.cc` carries `kMountXyz`/`kMountRpy` and
+`kCamXyz`/`kCamRpy` as compile-time constants, because the simulator computes the sweep and the
+render inside its own process and links no ROS: it cannot ask TF where the sensors are. The URDF
+owns the same four numbers. Move one and not the other and the cloud arrives in a frame that
+does not describe where it was taken from, which reads downstream as an odometry or a
+calibration fault rather than as what it is.
 """
 
 import math
@@ -14,23 +15,19 @@ import re
 import xml.etree.ElementTree as ET
 
 import pytest
-import yaml
 
-_URDF = pathlib.Path(__file__).resolve().parent.parent / "urdf" / "g1_29dof_with_hand_rev_1_0.urdf"
-_SENSOR_PUBLISHER = (
-    pathlib.Path(__file__).resolve().parents[3]
-    / "vendor"
-    / "unitree_mujoco"
-    / "simulate"
-    / "src"
-    / "sensor_publisher.cc"
+_URDF = (
+    pathlib.Path(__file__).resolve().parent.parent
+    / "urdf"
+    / "g1_29dof_with_hand_rev_1_0.urdf"
 )
-
-_CAMERAS = pathlib.Path(__file__).resolve().parent.parent / "config" / "cameras.yaml"
+_SENSOR_PUBLISHER = (
+    pathlib.Path(__file__).resolve().parents[3] / "vendor" / "unitree_mujoco" / "sensor_publisher.cc"
+)
 
 # Which simulator constant mirrors which URDF joint. Both are expressed in torso_link, which is
 # the body the simulator resolves by name.
-_MOUNTS = (("kMountXyz", "kMountRpy", "mid360_joint"),)
+_MOUNTS = (("kMountXyz", "kMountRpy", "mid360_joint"), ("kCamXyz", "kCamRpy", "d435_joint"))
 
 
 def _urdf_joint_origin(joint_name):
@@ -73,10 +70,3 @@ def test_the_simulator_mounts_match_the_urdf(xyz_name, rpy_name, joint_name):
         f"{rpy_name} vs {joint_name}'s rpy"
     )
 
-
-def test_the_head_camera_mount_matches_the_urdf():
-    xyz, rpy = _urdf_joint_origin("d435_joint")
-    head = yaml.safe_load(_CAMERAS.read_text())["head"]
-    assert head["parent"] == "torso_link"
-    assert head["xyz"] == pytest.approx(xyz, abs=1e-9)
-    assert head["rpy"] == pytest.approx(rpy, abs=1e-9)

@@ -4,10 +4,10 @@
   <name>g1_msgs</name>
   <version>0.1.0</version>
   <description>
-    Interfaces for the G1 stack: the base-approach (g1_locomotion), manipulation
-    (g1_manipulation) and learned-grasp (g1_vla) actions, and the policy-engine,
-    grasp-generation and grounding services. The world model's and the detector's are in
-    canopy_msgs.
+    Interfaces for the G1 stack: the SetLocoMode action and LocoStatus message
+    for the LocoClient bridge (g1_locomotion), and the Pick, Place and
+    SetArmPosture actions the manipulation skills serve (g1_manipulation). See
+    README for why each is an action rather than a service.
   </description>
   <maintainer email="gupta.adyansh@gmail.com">Adyansh</maintainer>
   <license>BSD-3-Clause</license>
@@ -17,8 +17,6 @@
 
   <depend>builtin_interfaces</depend>
   <depend>geometry_msgs</depend>
-  <depend>std_msgs</depend>
-  <depend>trajectory_msgs</depend>
   <!-- Requires action_msgs to build. -->
   <depend>action_msgs</depend>
 

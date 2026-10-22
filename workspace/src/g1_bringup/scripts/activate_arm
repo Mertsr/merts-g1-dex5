@@ -1,99 +1,88 @@
 #!/usr/bin/env python3
-"""Acquires the G1 arms and hands, then moves the arms somewhere a planner can work from.
+"""Acquires control authority over the G1 arm bridge, in the mandatory order.
 
-G1LowCmdSystem is active from bring-up and holds the arms through arm_freeze_controller. Acquiring
-swaps that for arm_trajectory_controller in one switch, because a joint the component sees
-unclaimed is left unpowered. The hand is a separate component and follows, best-effort.
+Waits for /lowstate to be flowing (covers the sim/CM discovery race: the
+hardware component refuses to activate on stale/absent feedback -- see
+g1_hardware_interface's README), then activates G1ArmSdkSystem *before*
+arm_trajectory_controller. That order is mandatory: Humble ties
+command-interface availability to hardware component state, so switching the
+controller in first can fail (see g1_bringup's README).
 
-Nothing moves until the whole body is held and the balance policy has carried the robot for a
-while: arms swinging while it takes over are what knocked the robot down at bring-up.
-
-The arms then move out to the sides unplanned: where they hang at bring-up is inside the octomap
-of any table in front, and MoveIt cannot plan from a start state in collision.
-
-With --posture sides the arms hang beside the thighs instead, for exploration: at zero the
-forearms point forward, into both cameras' views, and a real detector maps the hands as objects.
---no-hands leaves the Dex5 hand alone.
-
-Python, not C++: one-shot sequencing well under 1 Hz.
+Python, not C++: this is a one-shot administrative sequencing tool (service
+calls + a bounded retry loop, well under 1 Hz), the same category as the
+launch files it's a sibling to -- not a control loop, so there's no
+real-time/hot-path argument for C++ here.
 """
 
-import argparse
 import sys
 import time
 
 import rclpy
-from control_msgs.action import FollowJointTrajectory
-from controller_manager_msgs.srv import (
-    ListControllers,
-    SetHardwareComponentState,
-    SwitchController,
-)
+from controller_manager_msgs.srv import SetHardwareComponentState, SwitchController
 from lifecycle_msgs.msg import State
-from rclpy.action import ActionClient
-from rclpy.duration import Duration
 from rclpy.node import Node
-from rclpy.utilities import remove_ros_args
-from trajectory_msgs.msg import JointTrajectoryPoint
+from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
+from unitree_hg.msg import LowState
 
+COMPONENT_NAME = "G1ArmSdkSystem"
 CONTROLLER_NAME = "arm_trajectory_controller"
-# What holds the arms until the trajectory controller displaces it.
-ARM_FREEZE_CONTROLLER = "arm_freeze_controller"
+LOWSTATE_TOPIC = "/lowstate"
 
-# What may hold each part of the body: the waist, the arms, and the legs, through the balance
-# policy or, with the pelvis pinned, a freeze.
-BODY_HOLDERS = (
-    ("waist_freeze_controller",),
-    (ARM_FREEZE_CONTROLLER, CONTROLLER_NAME),
-    ("agile_controller", "locomotion_freeze_controller"),
+# The hands, acquired in the same order and by the same rules. Best-effort on purpose: a
+# hand that is absent, unpowered or simply not publishing state must not stop the arm from
+# being usable, and G1HandSystem refuses to activate without fresh feedback precisely so
+# that shows up here rather than as fingers driven from a stale measurement.
+HANDS = (
+    ("G1HandSystemLeft", "left_hand_controller"),
+    ("G1HandSystemRight", "right_hand_controller"),
 )
-# How long the balance policy carries the robot before the arms move. The simulator lets go of its
-# start-up hold 0.5 s after the last joint is claimed; arms set moving within a second of that
-# tripped the safety controller in 6 of 19 bring-ups, and its freeze cannot balance.
-SETTLE_S = 3.0
-BODY_TIMEOUT_S = 60.0
-
-# Best-effort: a hand that fails to activate must not cost the arm. Left Dex5 only; the right hand
-# has no component or controller yet, so asking for it would only fail.
-HANDS = (("G1Dex5SystemLeft", "left_hand_controller"),)
 # Shorter than the arm's: an absent hand should be reported quickly, not waited out twice.
 HAND_ACTIVATE_TIMEOUT_S = 5.0
 
-# Out to the sides with the palms near hip height, clear of any table. Left arm values; the pose
-# is symmetric, so the arms' mass cancels laterally.
-CLEAR_POSTURE = {
-    "shoulder_pitch_joint": 0.90,
-    "shoulder_roll_joint": 1.10,
-    "shoulder_yaw_joint": 0.0,
-    "elbow_joint": 0.0,
-    "wrist_roll_joint": 0.0,
-    "wrist_pitch_joint": 0.0,
-    "wrist_yaw_joint": 0.0,
-}
-# Nearly straight, beside the thighs, with the roll keeping the palms off them. Every hand and
-# forearm link is then at least 40 px outside both camera images.
-SIDES_POSTURE = {
-    "shoulder_pitch_joint": 0.0,
-    "shoulder_roll_joint": 0.20,
-    "shoulder_yaw_joint": 0.0,
-    "elbow_joint": 1.40,
-    "wrist_roll_joint": 0.0,
-    "wrist_pitch_joint": 0.0,
-    "wrist_yaw_joint": 0.0,
-}
-POSTURES = {"clear": CLEAR_POSTURE, "sides": SIDES_POSTURE}
-# Ramped, not snapped: this is a real motion on a real arm.
-POSTURE_DURATION_S = 4.0
-ARM_TRAJECTORY_ACTION = "/arm_trajectory_controller/follow_joint_trajectory"
+# Generous versus the component's own lowstate_timeout_ms (100 ms default):
+# this check only proves /lowstate is flowing at all before we even attempt
+# activation, not the component's own freshness gate.
+LOWSTATE_FRESH_WINDOW_S = 0.5
+LOWSTATE_WAIT_TIMEOUT_S = 30.0
 
 COMPONENT_RETRY_PERIOD_S = 0.5
 COMPONENT_ACTIVATE_TIMEOUT_S = 15.0
 SERVICE_CALL_TIMEOUT_S = 5.0
 
 
+def wait_for_fresh_lowstate(node, timeout_s):
+    """Blocks until at least one recent /lowstate sample has arrived."""
+    last_arrival = {"time": None}
+
+    def _cb(_msg):
+        last_arrival["time"] = time.monotonic()
+
+    qos = QoSProfile(
+        depth=1,
+        reliability=QoSReliabilityPolicy.BEST_EFFORT,
+        durability=QoSDurabilityPolicy.VOLATILE,
+        history=QoSHistoryPolicy.KEEP_LAST,
+    )
+    sub = node.create_subscription(LowState, LOWSTATE_TOPIC, _cb, qos)
+    try:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            rclpy.spin_once(node, timeout_sec=0.1)
+            if (
+                last_arrival["time"] is not None
+                and (time.monotonic() - last_arrival["time"]) < LOWSTATE_FRESH_WINDOW_S
+            ):
+                return True
+        return False
+    finally:
+        node.destroy_subscription(sub)
+
+
 def set_component_state(node, client, name, target_state_id, target_label, retry_timeout_s):
-    """Bounded retry: controller_manager may not be discovered yet, and activation is legitimately
-    refused when a backend's feedback just missed its freshness window."""
+    """Bounded retry: the component/controller_manager may not be discovered
+    yet, or activation may be legitimately refused if /lowstate just barely
+    missed the freshness window (see g1_hardware_interface's on_activate).
+    """
     deadline = time.monotonic() + retry_timeout_s
     last_error = "no attempt made"
     while time.monotonic() < deadline:
@@ -137,109 +126,44 @@ def switch_controller(node, client, activate, deactivate, timeout_s):
     return result is not None and result.ok
 
 
-def wait_for_body(node, client, timeout_s):
-    """Until every part of the body is held, then SETTLE_S more for the balance policy."""
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        if client.wait_for_service(timeout_sec=1.0):
-            future = client.call_async(ListControllers.Request())
-            rclpy.spin_until_future_complete(node, future, timeout_sec=SERVICE_CALL_TIMEOUT_S)
-            result = future.result() if future.done() else None
-            active = {c.name for c in result.controller if c.state == "active"} if result else set()
-            if all(active.intersection(holders) for holders in BODY_HOLDERS):
-                time.sleep(SETTLE_S)
-                return True
-        time.sleep(COMPONENT_RETRY_PERIOD_S)
-    return False
-
-
-def retry_switch(node, client, activate, deactivate, retry_timeout_s):
-    """Same patience the component activation gets; this switch is the whole arm acquire."""
-    deadline = time.monotonic() + retry_timeout_s
-    while time.monotonic() < deadline:
-        if switch_controller(node, client, activate, deactivate, SERVICE_CALL_TIMEOUT_S):
-            return True
-        time.sleep(COMPONENT_RETRY_PERIOD_S)
-    return False
-
-
-def move_arms(node, name, timeout_s=20.0):
-    """Sends the arms to a posture through the controller, with no planner involved."""
-    client = ActionClient(node, FollowJointTrajectory, ARM_TRAJECTORY_ACTION)
-    if not client.wait_for_server(timeout_sec=timeout_s):
-        node.get_logger().warning(
-            f"{ARM_TRAJECTORY_ACTION} is not serving; leaving the arms where they hang"
-        )
-        return False
-
-    goal = FollowJointTrajectory.Goal()
-    point = JointTrajectoryPoint()
-    # The rolls above are the left arm's, as the SRDF writes its states; the right one mirrors.
-    for side, mirror in (("left", 1.0), ("right", -1.0)):
-        for joint, value in POSTURES[name].items():
-            goal.trajectory.joint_names.append(f"{side}_{joint}")
-            point.positions.append(mirror * value if joint.endswith("roll_joint") else value)
-    # Not int(seconds): a truncated fraction is an arm moving faster than this file says.
-    point.time_from_start = Duration(seconds=POSTURE_DURATION_S).to_msg()
-    goal.trajectory.points = [point]
-
-    handle_future = client.send_goal_async(goal)
-    rclpy.spin_until_future_complete(node, handle_future, timeout_sec=timeout_s)
-    handle = handle_future.result() if handle_future.done() else None
-    if handle is None or not handle.accepted:
-        node.get_logger().warning(f"the arm controller refused the {name} posture")
-        return False
-
-    result_future = handle.get_result_async()
-    rclpy.spin_until_future_complete(
-        node, result_future, timeout_sec=POSTURE_DURATION_S + timeout_s
-    )
-    result = result_future.result() if result_future.done() else None
-    if result is None or result.result.error_code != 0:
-        node.get_logger().warning(f"the arms did not reach the {name} posture")
-        return False
-    return True
-
-
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--posture", choices=sorted(POSTURES), default="clear")
-    parser.add_argument("--no-hands", action="store_true", help="leave the Dex5 hand alone")
-    args = parser.parse_args(remove_ros_args(sys.argv if argv is None else argv)[1:])
+def main():
     rclpy.init()
     node = Node("g1_bringup_activate_arm")
     try:
+        node.get_logger().info(f"waiting for {LOWSTATE_TOPIC} to be flowing...")
+        if not wait_for_fresh_lowstate(node, LOWSTATE_WAIT_TIMEOUT_S):
+            node.get_logger().error(
+                f"{LOWSTATE_TOPIC} never became fresh -- is sim.launch.py running?"
+            )
+            return 1
+
         component_client = node.create_client(
             SetHardwareComponentState, "/controller_manager/set_hardware_component_state"
         )
         controller_client = node.create_client(
             SwitchController, "/controller_manager/switch_controller"
         )
-        list_client = node.create_client(ListControllers, "/controller_manager/list_controllers")
 
-        node.get_logger().info(
-            "waiting for the body to be held and the balance policy to settle..."
-        )
-        if not wait_for_body(node, list_client, BODY_TIMEOUT_S):
-            node.get_logger().error(
-                f"the waist, arms and legs were not all held within {BODY_TIMEOUT_S:.0f} s; "
-                "leaving the arms alone"
-            )
+        node.get_logger().info(f"activating hardware component {COMPONENT_NAME}...")
+        if not set_component_state(
+            node,
+            component_client,
+            COMPONENT_NAME,
+            State.PRIMARY_STATE_ACTIVE,
+            "active",
+            COMPONENT_ACTIVATE_TIMEOUT_S,
+        ):
             return 1
 
-        # One switch, not two: see this script's module docstring.
+        # Component-then-controller: see this script's module docstring.
         node.get_logger().info(f"activating controller {CONTROLLER_NAME}...")
-        if not retry_switch(
-            node,
-            controller_client,
-            [CONTROLLER_NAME],
-            [ARM_FREEZE_CONTROLLER],
-            COMPONENT_ACTIVATE_TIMEOUT_S,
+        if not switch_controller(
+            node, controller_client, [CONTROLLER_NAME], [], SERVICE_CALL_TIMEOUT_S
         ):
             node.get_logger().error(f"failed to activate {CONTROLLER_NAME}")
             return 1
 
-        for component, controller in () if args.no_hands else HANDS:
+        for component, controller in HANDS:
             node.get_logger().info(f"activating hand {component}...")
             if not set_component_state(
                 node,
@@ -253,29 +177,10 @@ def main(argv=None):
             ):
                 node.get_logger().warning(
                     f"{component} did not come up; the arm is still usable but this hand "
-                    "will not move. Check the hand backend and its logs."
+                    "will not move. Check that it is powered and publishing state."
                 )
 
-        if args.posture == "sides":
-            node.get_logger().info("hanging the arms at the sides, out of the cameras' view...")
-            if not move_arms(node, "sides"):
-                node.get_logger().error("the arms still hang where the cameras see them")
-                return 1
-            node.get_logger().info("the arms hang at the sides.")
-            return 0
-
-        node.get_logger().info("moving the arms clear of whatever is in front of the robot...")
-        if not move_arms(node, "clear"):
-            # The arm is acquired and usable by hand, but still inside the octomap, so every
-            # planned motion after this is refused at its start state.
-            node.get_logger().error(
-                "the arms are still where they hang; MoveIt will refuse to plan from there. "
-                "Move them clear before asking for a skill."
-            )
-            return 1
-        node.get_logger().info("the arms are clear and a planner can work from here.")
-
-        node.get_logger().info("activation complete: the arm and the left hand are acquired.")
+        node.get_logger().info("activation complete: component and controller both active.")
         return 0
     finally:
         node.destroy_node()

@@ -1,128 +1,139 @@
 # g1_sensor_relay
 
 Publishes the sensor data sampled inside the patched `unitree_mujoco`. The simulator computes the
-LiDAR sweep, the camera renders, the Mid360's IMU, the pelvis state and the object poses against
-its own `mjData` and sends finished frames over a local socket; this node turns them into ROS 2
-messages.
+LiDAR sweep and the camera render against its own `mjData` and hands finished frames over a local
+socket; this node turns them into ROS 2 messages.
 
-`ament_cmake`, C++20. Simulation only. Two executables, started by other packages' launch files:
-`g1_sensor_relay` by `g1_bringup`'s `sim.launch.py`, `g1_livox_bridge` by `g1_state_estimation`'s
-`fastlio_odometry.launch.py`.
+`ament_cmake`, C++20. Simulation only.
 
 ```mermaid
 flowchart LR
     MJ["unitree_mujoco<br/>sweep and render<br/>against mjData"] -- "unix socket<br/>length-prefixed frames" --> R
     R["g1_sensor_relay"] --> PC["/livox/lidar"]
-    R --> D["/camera/*/image_raw"]
+    R --> D["/camera/aligned_depth_to_color/image_raw"]
+    R --> C["/camera/color/image_raw"]
+    R --> CI["camera_info"]
     R --> IM["/livox/imu"]
-    R --> BS["~/base_state"]
-    R --> OP["~/object_poses"]
     PC --> B["g1_livox_bridge"]
     B --> CM["/livox/custom_msg"]
 ```
 
 ## Why the split exists
 
-The simulator process links no ROS. `unitree_sdk2` owns CycloneDDS there, and `rmw_cyclonedds`
-cannot share a process with it: both call `dds_create_domain` for the same domain id. The sampling
-has to happen inside the simulator, because the scene lives in its `mjData`; only finished frames
-cross the socket.
+`unitree_sdk2` and `rmw_cyclonedds` both call `dds_create_domain` unconditionally, and CycloneDDS
+allows exactly one explicit domain creation per domain id per process. They cannot coexist in
+either order. So the simulator links no ROS at all, and this node owns the ROS side.
+
+The sweep itself has to happen inside the simulator because it needs the scene: geometry, meshes
+and current pose all live in `mjData` in that process, and no DDS topic carries them. The finished
+frame is what crosses the boundary.
 
 ## Topics
 
 | Topic | Type | Notes |
 |---|---|---|
-| `/livox/lidar` | `sensor_msgs/msg/PointCloud2` | The sweep in `mid360_link`: `x`, `y`, `z` floats only. Misses are NaN. |
-| `/camera/aligned_depth_to_color/image_raw` | `sensor_msgs/msg/Image` | The head camera: `32FC1`, metres. Misses are NaN, not 0. |
+| `/livox/lidar` | `sensor_msgs/msg/PointCloud2` | Sensor data QoS, so a reliable subscriber sees nothing. |
+| `/camera/aligned_depth_to_color/image_raw` | `sensor_msgs/msg/Image` | `32FC1`, metres. Misses are NaN, not 0. |
 | `/camera/color/image_raw` | `sensor_msgs/msg/Image` | `rgb8` |
 | `/camera/aligned_depth_to_color/camera_info`, `/camera/color/camera_info` | `sensor_msgs/msg/CameraInfo` | Same intrinsics. |
-| `/chest_camera/...` | as above | The chest camera, the same four topics, when the simulator renders it (`cameras:=head,chest`). |
-| `/livox/imu` | `sensor_msgs/msg/Imu` | The IMU inside the Mid360, 200 Hz. Reliable like the real driver, depth 400 because samples arrive in bursts. |
-| `~/base_state` | `nav_msgs/msg/Odometry` | Exact pelvis state out of MuJoCo, for `g1_state_estimation`'s ground-truth source. Not `/odom`, because it is truth, not an estimate. Reliable, depth 50. |
-| `~/object_poses`, `~/chest/object_poses` | `vision_msgs/msg/Detection3DArray` | Raw ground truth in each camera's colour frame. `g1_object_pose_source` and the mock detector turn it into `/objects` and masks. |
-| `~/sensor_pose` | `geometry_msgs/msg/PoseStamped` | Where the simulator says the LiDAR is, in `world_frame_id`. Read by `test_lidar_geometry` and the RViz configs. |
-| `/livox/custom_msg` | `livox_ros_driver2/msg/CustomMsg` | Published by `g1_livox_bridge`, not the relay. Reliable, depth 20, matching the real driver. |
+| `~/sensor_pose` | `geometry_msgs/msg/PoseStamped` | Where the simulator says the sensor is. Diagnostic. |
+| `/livox/imu` | `sensor_msgs/msg/Imu` | The IMU inside the Mid360, 200 Hz. Reliable, depth 10, matching the real driver. |
+| `/livox/custom_msg` | `livox_ros_driver2/msg/CustomMsg` | `g1_livox_bridge` only. Reliable, depth 20, matching the real driver. |
 
-Every other topic uses sensor-data QoS (best effort), so a reliable subscriber sees nothing.
-
-Depth and colour come from one render, so they share a pose, a stamp and intrinsics, as a D435i's
-align-depth-to-colour step gives; hence the depth topic's name. The stamp is the render's instant
-on this node's clock, as the RealSense driver stamps capture, so cameras rendered from one snapshot
-share it.
-
-Images are published in the REP-145 optical frames, not the camera's body link: depth consumers
-assume z forward, and the body frame would rotate the cloud 90 degrees. Each depth frame carries
-the name of the camera it came from, and the relay publishes it under that camera's topics.
+Depth and colour come from one render, so they share a pose, a timestamp and intrinsics by
+construction. A real D435i only gets that alignment from its own align-depth-to-colour step, which
+is why the depth topic is named as if it had run.
 
 ## Parameters
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `socket_path` | `/tmp/g1_sensors.sock` | Where the relay listens. `sim.launch.py` sets it from the world's sensor config in `g1_bringup` (`sim_sensors.yaml`, or `sim_sensors_<world>.yaml`), which the simulator reads too. |
-| `poll_hz` | `500.0` | Socket drain rate. |
-| `topic`, `frame_id` | `/livox/lidar`, `mid360_link` | The point cloud. |
-| `imu_topic`, `imu_frame_id` | `/livox/imu`, `mid360_imu` | The Mid360's IMU. Its rate is `imu_rate_hz` in the sensor config. |
-| `cameras` | `[head]` | Camera names the simulator may send; the shipped config lists `head` and `chest`. |
-| `N.depth_topic`, `N.depth_info_topic`, `N.color_topic`, `N.info_topic` | `/camera/...` for `head`, `/N_camera/...` otherwise | Camera N's topics; `N` is a name from `cameras`, as in `head.depth_topic`. |
-| `N.depth_frame_id`, `N.color_frame_id` | `camera_*_optical_frame` for `head`, `N_camera_*_optical_frame` otherwise | REP-145 optical frames. |
-| `N.object_poses_topic` | `~/object_poses` for `head`, `~/N/object_poses` otherwise | Ground truth in camera N's colour frame. |
-| `world_frame_id` | `world` | Frame stamped on `~/sensor_pose`. The shipped config sets `odom`, since TF has no `world`. |
-| `base_state_frame_id`, `base_state_odom_frame` | `pelvis`, `odom` | Frames stamped on `~/base_state`. |
+| `socket_path` | `/tmp/g1_sensors.sock` | Where the relay listens. The simulator connects to it. |
+| `frame_id` | `mid360_link` | Frame for the point cloud. |
+| `depth_frame_id` | `camera_depth_optical_frame` | REP-145 optical frame. |
+| `color_frame_id` | `camera_color_optical_frame` | REP-145 optical frame. |
+| `world_frame_id` | `world` | Frame for the diagnostic sensor pose. |
+
+`imu_topic` (`/livox/imu`) and `imu_frame_id` (`mid360_imu`) name the sensor's own IMU;
+`imu_rate_hz` in the simulator's sensor config sets its rate, 200 Hz to match a real Mid360.
+`g1_livox_bridge` takes `cloud_topic` and `custom_msg_topic`.
+
+Start order does not matter. The relay listens whenever it comes up and the simulator retries every
+cycle, so either process can start, die or restart independently.
+
+The optical frames are not `d435_link`. That is a body frame with x forward, and every depth
+consumer assumes the optical convention with z forward, so publishing in the link frame rotates the
+cloud 90 degrees.
 
 ## Running
+
+The node starts with `sensors:=true`:
 
 ```bash
 ros2 launch g1_bringup bringup.launch.py sensors:=true rviz:=true
 ros2 topic hz /livox/lidar
 ```
 
-Start order does not matter. The relay listens whenever it comes up and the simulator retries every
-cycle, so either process can start, die or restart independently.
-
 ## g1_livox_bridge
 
-Started when FAST-LIO runs in simulation. It restates the relay's PointCloud2 as the Livox
-`CustomMsg` FAST-LIO consumes, so the odometry pipeline is identical to the robot's, where
-`livox_ros_driver2` publishes it. It takes `cloud_topic` and `custom_msg_topic`, and drops the
-non-finite points, which are misses.
+A second executable, run only when FAST-LIO is asked for (`odometry:=fast_lio`, via
+`g1_state_estimation`'s `fastlio_odometry.launch.py`). It restates the relay's PointCloud2 as
+the Livox `CustomMsg` FAST-LIO consumes -- one of the two topics `livox_ros_driver2` publishes
+on the robot, so the odometry pipeline downstream is identical in both places. The other,
+`/livox/imu`, comes off the socket above.
 
-Every point goes out with `offset_time` zero. That is truthful: the simulator raycasts the whole
-sweep against a frozen snapshot, so there is no motion inside a frame to undistort.
+Every point goes out with `offset_time` zero, which is truthful rather than a shortcut: the
+simulator raycasts the whole sweep against a frozen snapshot, so there is no motion inside a
+frame for FAST-LIO's undistortion to undo. A real Mid360 sweeps continuously, which is exactly
+what this bridge cannot reproduce and why undistortion stays unvalidated until hardware.
 
 ## The Mid360's own IMU
 
-FAST-LIO fuses the IMU that shares a housing with the laser, and the simulator models one there: a
-MuJoCo site on `torso_link` at `g1_description`'s `mid360_imu` pose, sampled on its own thread at
-200 Hz. It rides this socket rather than `/lowstate`, because `unitree_hg::LowState` carries exactly
-one `imu_state`; the real sensor reports over its own Ethernet link. Why the pelvis IMU cannot stand
-in, and what the simulated pipeline leaves unvalidated, is in the
-[g1_state_estimation README](../g1_state_estimation/README.md).
+FAST-LIO fuses the IMU that shares a housing with the laser, and the simulator models one there:
+a MuJoCo site on `torso_link` at `g1_description`'s `mid360_imu` pose, sampled on its own thread
+at 200 Hz and sent over this socket. It cannot ride `/lowstate` -- `unitree_hg::LowState` carries
+exactly one `imu_state`, matching a robot whose second IMU reports over the sensor's own Ethernet
+link.
 
-## Object poses
+It used to be the pelvis IMU, and that is a defect worth remembering rather than a simplification.
+`waist_yaw`, `waist_roll` and `waist_pitch` lie between pelvis and sensor, the walking policy owns
+all three, and they move through 25, 9 and 16 degrees while walking. FAST-LIO takes one constant
+lidar-to-IMU extrinsic, so across that chain no value is right: the scan match came apart whenever
+the robot turned, and how badly depended on where in its gait it happened to be, which is why the
+same configuration scored anywhere between 1 % and 27 % drift.
 
-`~/object_poses` carries the bodies listed under `object_bodies` in the sensor config, in
-`camera_color_optical_frame` (each other camera's topic in its own frame), as a detector would
-report them, so `g1_object_pose_source` runs the same code on the robot. The camera's world pose
-comes from the LiDAR's ground-truth pose and the rigid LiDAR-to-camera transform, so it is one
-sweep stale: a few centimetres at walking pace.
+## Layout
 
-## Wire format
+| File | Contents |
+|---|---|
+| `frame_reader.{hpp,cpp}` | Framing and validation, free of ROS and sockets so the wire format tests without a simulator. |
+| `livox_custom_msg.{hpp,cpp}` | PointCloud2 to CustomMsg, split out so the conversion tests without a graph. |
+| `g1_sensor_relay_node.cpp` | The socket, the poll loop and the publishers. |
+| `g1_livox_bridge_node.cpp` | The FAST-LIO front end above. |
+| `sensor_frame.h` | The wire struct, duplicated on the simulator side. |
 
-`sensor_frame.h` is the wire struct, byte-identical to the simulator's
-`simulate/src/sensor_frame.h` (submodule `workspace/vendor/unitree_mujoco`). `frame_reader` holds
-the framing and validation and `livox_custom_msg` the PointCloud2 to CustomMsg conversion; both are
-free of ROS and sockets, so they test without a simulator. The wire format is untrusted input:
-every length is validated before use, and point, pixel and object counts are capped.
+The wire format is untrusted input: every length is validated before it is trusted, including the
+one multiply that could overflow.
 
 ## Tests
 
 ```bash
-./scripts/manage.sh test g1_sensor_relay
+colcon test --packages-select g1_sensor_relay
 ```
 
-`test_frame_reader` covers the framing, the bounds checks, and a drift check that reads both copies
-of `sensor_frame.h`. `test_livox_custom_msg` covers the conversion against FAST-LIO's own discard
-gates (`line`, the tag bits, `offset_time`) and the miss handling. Neither needs a simulator.
-`g1_bringup`'s simulator suites (`./scripts/manage.sh test --sim g1_bringup`) cover the rest:
-`test_lidar_geometry` asserts the published cloud measures the room it is in, and
-`test_fastlio_odometry` runs the bridge and the IMU end to end.
+`test_frame_reader` covers the framing, the bounds checks and a drift check that reads both copies
+of `sensor_frame.h`. `test_livox_custom_msg` covers the conversion against FAST-LIO's own
+discard gates (`line`, the tag bits, `offset_time`) and the miss handling. Neither needs a
+simulator. `g1_bringup`'s `test_lidar_geometry` asserts the
+published cloud measures the room it is in.
+
+### Object poses are reported as the camera would see them
+
+`~/object_poses` carries objects in `camera_color_optical_frame`, not in the simulator's world
+frame. The simulator knows world poses; a detector knows what is in front of its lens, and
+everything downstream is built for the latter. The conversion happens here so it stays inside
+the sim-only boundary and `g1_object_pose_source` runs the same code on the robot.
+
+The camera's world pose comes from the LiDAR sweep's own ground-truth pose composed with the
+rigid LiDAR-to-camera transform, so it is one sweep stale. That is a few centimetres at walking
+pace, and a truer model of a real detector than an exact answer would be.

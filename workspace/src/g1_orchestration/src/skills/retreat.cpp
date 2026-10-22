@@ -1,8 +1,3 @@
-/**
- * @file retreat.cpp
- * @brief Ports and goal for the Retreat leaf.
- */
-
 #include "g1_orchestration/skills/retreat.hpp"
 
 #include <string>

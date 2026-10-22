@@ -1,8 +1,3 @@
-/**
- * @file livox_cloud.cpp
- * @brief The hardware Livox CustomMsg -> PointCloud2 conversion.
- */
-
 #include "g1_state_estimation/livox_cloud.hpp"
 
 #include <cstdint>
@@ -17,11 +12,13 @@ void toPointCloud2(
     cloud.header = custom.header;
     cloud.height = 1;
     cloud.width  = static_cast<std::uint32_t>(custom.points.size());
-    // Unfiltered, so is_dense stays false.
+    // Unordered, and a sweep can legitimately return nothing: that is what is_dense=false says.
     cloud.is_dense     = false;
     cloud.is_bigendian = false;
 
-    // Spelled out: setPointCloud2FieldsByString knows only xyz, rgb and rgba, not intensity.
+    // Fields spelled out rather than setPointCloud2FieldsByString: that helper only knows
+    // "xyz", "rgb" and "rgba", and throws on anything else -- including "intensity", which is
+    // the field every consumer of /livox/lidar reads.
     sensor_msgs::PointCloud2Modifier modifier(cloud);
     modifier.setPointCloud2Fields(
         4,

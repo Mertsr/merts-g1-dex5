@@ -1,8 +1,3 @@
-/**
- * @file frame_reader.cpp
- * @brief Validates and unpacks one sensor frame from the socket byte stream.
- */
-
 #include "g1_sensor_relay/frame_reader.hpp"
 
 #include <cstring>
@@ -35,8 +30,7 @@ FrameStatus tryReadFrame(std::vector<std::uint8_t>& buffer, CloudFrame& out)
     const bool is_depth   = header.kind == static_cast<std::uint32_t>(SensorFrameKind::Depth);
     const bool is_objects = header.kind == static_cast<std::uint32_t>(SensorFrameKind::ObjectPoses);
     const bool is_imu     = header.kind == static_cast<std::uint32_t>(SensorFrameKind::Imu);
-    const bool is_base    = header.kind == static_cast<std::uint32_t>(SensorFrameKind::BaseState);
-    if (!is_cloud && !is_depth && !is_objects && !is_imu && !is_base)
+    if (!is_cloud && !is_depth && !is_objects && !is_imu)
     {
         return FrameStatus::kBadKind;
     }
@@ -58,16 +52,10 @@ FrameStatus tryReadFrame(std::vector<std::uint8_t>& buffer, CloudFrame& out)
             return FrameStatus::kBadLength;
         }
     }
-    else if (is_base)
-    {
-        if (header.payload_bytes != sizeof(grove_g1::BaseStateRecord))
-        {
-            return FrameStatus::kBadLength;
-        }
-    }
     else if (is_objects)
     {
-        // The count is derived, so check for whole records and a sane number of them.
+        // The record count is derived rather than carried, so the only thing to check is
+        // that the payload is a whole number of records and not an absurd number of them.
         if (header.payload_bytes % sizeof(grove_g1::ObjectPoseRecord) != 0 ||
             header.payload_bytes / sizeof(grove_g1::ObjectPoseRecord) > kMaxObjects)
         {
@@ -99,7 +87,6 @@ FrameStatus tryReadFrame(std::vector<std::uint8_t>& buffer, CloudFrame& out)
     out.width    = header.width;
     out.height   = header.height;
     out.fovy_deg = header.fovy_deg;
-    out.camera.assign(header.camera, strnlen(header.camera, sizeof(header.camera)));
     if (is_cloud)
     {
         out.kind = FrameKind::kPointCloud;
@@ -120,15 +107,6 @@ FrameStatus tryReadFrame(std::vector<std::uint8_t>& buffer, CloudFrame& out)
         out.objects.clear();
         std::memcpy(&out.imu, buffer.data() + sizeof(header), sizeof(out.imu));
     }
-    else if (is_base)
-    {
-        out.kind = FrameKind::kBaseState;
-        out.depth.clear();
-        out.rgb.clear();
-        out.points.clear();
-        out.objects.clear();
-        std::memcpy(&out.base, buffer.data() + sizeof(header), sizeof(out.base));
-    }
     else if (is_objects)
     {
         out.kind = FrameKind::kObjectPoses;
@@ -139,7 +117,8 @@ FrameStatus tryReadFrame(std::vector<std::uint8_t>& buffer, CloudFrame& out)
         {
             std::memcpy(out.objects.data(), buffer.data() + sizeof(header), header.payload_bytes);
         }
-        // Force termination: the name is copied straight into a message field.
+        // The name is used to build a topic-visible id, so a producer that somehow sent an
+        // unterminated one must not run off the end of the record.
         for (grove_g1::ObjectPoseRecord& record : out.objects)
         {
             record.name[sizeof(record.name) - 1] = '\0';

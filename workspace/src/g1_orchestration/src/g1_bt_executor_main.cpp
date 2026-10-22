@@ -2,8 +2,11 @@
  * @file g1_bt_executor_main.cpp
  * @brief Loads a behavior tree and ticks it, with the arm bracket guaranteed around the run.
  *
- * Whether the tree succeeds, fails, throws or is interrupted, the arm and hands are released
- * before exit; a tree cannot promise that once it has stopped running.
+ * The tree decides what happens. This file's own job is narrower and is the part that must not
+ * be got wrong: whatever the tree does -- succeed, fail, throw, or be interrupted -- the arm
+ * and hands are released before this process exits. control-mode rule 4 asks for
+ * exactly that, and a tree cannot promise it for itself, because the paths where it matters
+ * most are the ones where the tree stopped running.
  */
 
 #include <behaviortree_cpp/bt_factory.h>
@@ -12,10 +15,8 @@
 
 #include <atomic>
 #include <chrono>
-#include <cmath>
 #include <csignal>
 #include <memory>
-#include <optional>
 #include <rclcpp/rclcpp.hpp>
 #include <string>
 #include <thread>
@@ -26,7 +27,9 @@
 namespace
 {
 
-// Written by the signal handler, where only a lock-free atomic is safe (not rclcpp::shutdown).
+// Set from the signal handler, so it must be exactly this type: everything else is undefined
+// behaviour in a handler, including rclcpp::shutdown. Mutable at namespace scope because a
+// handler cannot capture.
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 std::atomic<bool> g_interrupted{ false };
 
@@ -34,10 +37,12 @@ void onSignal(int) { g_interrupted = true; }
 
 constexpr double kReleaseTimeoutS = 15.0;
 
-/// Spin time after a halt, so published cancels are delivered before their clients are destroyed.
-constexpr auto kCancelSettle = std::chrono::milliseconds(500);
-
-/// Releases the arm and hands on scope exit, so no path out of main can skip it.
+/// Releases the arm and hands when it goes out of scope, however that happens.
+///
+/// A destructor rather than a call at the end of main: releasing only stays correct if every
+/// path out actually reaches it, and a destructor turns that from a property of the control
+/// flow into a property of the type -- control-mode rule 4 is then enforced by the language
+/// itself.
 class ArmBracket
 {
 public:
@@ -49,18 +54,7 @@ public:
     ArmBracket(const ArmBracket&)            = delete;
     ArmBracket& operator=(const ArmBracket&) = delete;
 
-    ~ArmBracket()
-    {
-        // Destructors are noexcept: an escaping exception would terminate the process.
-        try
-        {
-            g1_orchestration::releaseArm(logger_, timeout_s_);
-        }
-        catch (const std::exception& e)
-        {
-            RCLCPP_ERROR(logger_, "the arm may still be acquired: release threw: %s", e.what());
-        }
-    }
+    ~ArmBracket() { g1_orchestration::releaseArm(logger_, timeout_s_); }
 
 private:
     rclcpp::Logger logger_;
@@ -80,6 +74,9 @@ int main(int argc, char** argv)
 
         const std::string tree_file    = node->declare_parameter<std::string>("tree_file", "");
         const double      tick_rate_hz = node->declare_parameter<double>("tick_rate_hz", 10.0);
+        // 0 disables. 1667 is Groot2's own default, and the container runs with host
+        // networking, so the editor on the host reaches it at localhost with nothing to
+        // configure.
         const int groot2_port = static_cast<int>(node->declare_parameter<int>("groot2_port", 1667));
 
         if (tree_file.empty())
@@ -89,15 +86,9 @@ int main(int argc, char** argv)
             return 1;
         }
 
-        // 1/0 is infinite, which is UB to cast to a duration; a negative rate would tick flat out.
-        if (!std::isfinite(tick_rate_hz) || tick_rate_hz <= 0.0)
-        {
-            RCLCPP_ERROR(node->get_logger(), "tick_rate_hz must be positive, got %f", tick_rate_hz);
-            rclcpp::shutdown();
-            return 1;
-        }
-
-        // Installed before anything is acquired, so Ctrl-C reaches the release.
+        // Installed before anything is acquired, so a Ctrl-C during the run reaches the release
+        // below rather than killing the process with the arm still active. Checked, because a
+        // failed install silently removes that guarantee.
         const auto previous_int  = std::signal(SIGINT, onSignal);
         const auto previous_term = std::signal(SIGTERM, onSignal);
         if (previous_int == SIG_ERR || previous_term == SIG_ERR)
@@ -110,9 +101,16 @@ int main(int argc, char** argv)
 
         rclcpp::executors::SingleThreadedExecutor executor;
         executor.add_node(node);
+        std::thread spinner([&executor] {
+            while (rclcpp::ok() && !g_interrupted)
+            {
+                executor.spin_some(std::chrono::milliseconds(10));
+            }
+        });
 
         int exit_code = 0;
         {
+            // Closes when this scope ends, on every path out of it.
             const ArmBracket bracket(node->get_logger(), kReleaseTimeoutS);
 
             try
@@ -124,11 +122,11 @@ int main(int argc, char** argv)
                 BT::Tree tree = factory.createTreeFromFile(tree_file);
                 RCLCPP_INFO(node->get_logger(), "loaded %s", tree_file.c_str());
 
-                BT::StdCoutLogger                  cout_logger(tree);
-                std::optional<BT::Groot2Publisher> groot2;
+                BT::StdCoutLogger                    cout_logger(tree);
+                std::unique_ptr<BT::Groot2Publisher> groot2;
                 if (groot2_port > 0)
                 {
-                    groot2.emplace(tree, groot2_port);
+                    groot2 = std::make_unique<BT::Groot2Publisher>(tree, groot2_port);
                     RCLCPP_INFO(
                         node->get_logger(),
                         "Groot2 can connect on port %d. Note the free tier monitors at most 20 "
@@ -136,16 +134,8 @@ int main(int argc, char** argv)
                         groot2_port);
                 }
 
-                // Declared after the tree so it joins first; otherwise a leaf can be freed inside
-                // its result callback. spin_once, since spin_some never blocks and spins hot.
-                std::jthread spinner([&executor](const std::stop_token& stop) {
-                    while (rclcpp::ok() && !stop.stop_requested())
-                    {
-                        executor.spin_once(std::chrono::milliseconds(10));
-                    }
-                });
-
-                // Ticked by hand, not tickWhileRunning, so an interrupt is seen between ticks.
+                // Ticked by hand rather than with tickWhileRunning, so the interrupt is checked
+                // between ticks and a halt still runs every leaf's own cancellation.
                 const auto     period = std::chrono::duration<double>(1.0 / tick_rate_hz);
                 BT::NodeStatus status = BT::NodeStatus::RUNNING;
                 while (rclcpp::ok() && !g_interrupted && status == BT::NodeStatus::RUNNING)
@@ -159,8 +149,6 @@ int main(int argc, char** argv)
                 {
                     RCLCPP_WARN(node->get_logger(), "interrupted; halting the tree");
                     tree.haltTree();
-                    // The spinner is still up, so the cancels haltTree published go out now.
-                    std::this_thread::sleep_for(kCancelSettle);
                     exit_code = 130;
                 }
                 else
@@ -174,12 +162,16 @@ int main(int argc, char** argv)
             }
             catch (const std::exception& e)
             {
-                // The bracket above still releases the arm on the way out of this scope.
+                // A tree that failed to load is a normal enough mistake; leaving the arm
+                // acquired after one is not.
                 RCLCPP_ERROR(node->get_logger(), "mission aborted: %s", e.what());
                 exit_code = 1;
             }
 
-            // The spinner and the tree are already destroyed.
+            // Spinning stops before the bracket closes: releaseArm blocks on service calls and
+            // needs the executor out of the way to make them.
+            g_interrupted = true;
+            spinner.join();
             executor.remove_node(node);
         }
 
@@ -188,7 +180,7 @@ int main(int argc, char** argv)
     }
     catch (const std::exception& e)
     {
-        // Either the bracket never existed or it has already released.
+        // Nothing here has acquired the arm yet, so there is nothing to release.
         RCLCPP_ERROR(
             rclcpp::get_logger("g1_bt_executor"),
             "startup or shutdown failed: %s",

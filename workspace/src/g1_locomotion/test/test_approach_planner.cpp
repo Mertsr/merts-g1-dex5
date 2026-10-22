@@ -1,7 +1,10 @@
 /**
  * @file test_approach_planner.cpp
- * @brief The control law that walks the base into arm's reach, including the cases a good live
- *        run never exercises.
+ * @brief The decisions that walk the base into arm's reach.
+ *
+ * Worth testing away from a simulator because a live run exercises one trajectory, while the
+ * branches that matter are the ones a good run never touches: the overshoot that is recoverable,
+ * the one that is not, and the order the axes are corrected in.
  */
 
 #include <gmock/gmock.h>
@@ -14,171 +17,113 @@ namespace
 {
 
 using g1_locomotion::ApproachLimits;
-using g1_locomotion::ApproachState;
-using g1_locomotion::GaitLimits;
-using g1_locomotion::gaitLimitsAreUsable;
+using g1_locomotion::ApproachMove;
 using g1_locomotion::limitsAreUsable;
 using g1_locomotion::planApproach;
-using g1_locomotion::planNudge;
-using g1_locomotion::settledInReach;
 
 /// The shipped window: the arm's measured band at the workbench.
 ApproachLimits defaults() { return ApproachLimits{}; }
-GaitLimits     gait() { return GaitLimits{}; }
 
-/// Square to the surface, which is the case for everything except the heading tests.
-auto plan(double x, double y, const ApproachLimits& limits)
+ApproachMove moveFor(double x, double y, const ApproachLimits& limits)
 {
-    return planApproach(x, y, 0.0, limits, gait());
+    return planApproach(x, y, limits).move;
 }
 
-TEST(ApproachPlanner, ObjectInTheWindowIsArrivedAndCommandsNothing)
+TEST(ApproachPlanner, ObjectInTheWindowIsDone)
 {
-    const auto command = plan(0.270, -0.220, defaults());
-    EXPECT_EQ(command.state, ApproachState::kArrived);
-    EXPECT_DOUBLE_EQ(command.vx_mps, 0.0);
-    EXPECT_DOUBLE_EQ(command.vy_mps, 0.0);
-    EXPECT_DOUBLE_EQ(command.yaw_rate_rps, 0.0);
+    const auto limits = defaults();
+    EXPECT_EQ(moveFor(limits.target_x_m, limits.target_y_m, limits), ApproachMove::kDone);
 }
 
-TEST(ApproachPlanner, AnErrorJustOutsideTheWindowStillClearsTheGaitDeadband)
+TEST(ApproachPlanner, FarAwayItDrivesForwardAndMayCoast)
 {
-    // Just outside the window a plain P term asks for a speed inside the gait's deadband.
-    auto       limits = defaults();
-    const auto command =
-        plan(limits.target_x_m + limits.forward_tolerance_m + 0.001, -0.220, limits);
-
-    EXPECT_EQ(command.state, ApproachState::kClosing);
-    EXPECT_GE(command.vx_mps, gait().min_speed_x_mps);
+    const auto limits  = defaults();
+    const auto command = planApproach(limits.target_x_m + 2.0, limits.target_y_m, limits);
+    ASSERT_EQ(command.move, ApproachMove::kStep);
+    EXPECT_TRUE(command.coarse) << "two metres out, the caller may stop early and let it coast";
+    EXPECT_NEAR(command.forward_error_m, 2.0, 1e-9);
 }
 
-TEST(ApproachPlanner, ASmallLateralErrorClearsTheLateralFloorWhichIsHigher)
+TEST(ApproachPlanner, ASubStepGapDrivesToZeroInsteadOfCoasting)
 {
-    // Lateral's floor is higher: the gait tracks sideways worse.
-    auto       limits = defaults();
-    const auto command =
-        plan(0.270, limits.target_y_m + limits.lateral_tolerance_m + 0.001, limits);
-
-    EXPECT_EQ(command.state, ApproachState::kClosing);
-    EXPECT_GE(command.vy_mps, gait().min_speed_y_mps);
-}
-
-TEST(ApproachPlanner, ABigErrorIsCappedRatherThanScaledUp)
-{
-    const auto command = plan(2.0, 1.5, defaults());
-    EXPECT_EQ(command.state, ApproachState::kClosing);
-    EXPECT_DOUBLE_EQ(command.vx_mps, gait().max_speed_x_mps);
-    EXPECT_DOUBLE_EQ(command.vy_mps, gait().max_speed_y_mps);
-}
-
-TEST(ApproachPlanner, BothAxesAreDrivenAtOnce)
-{
-    // Every axis is driven in the same tick; nothing is sequenced.
-    const auto command = plan(0.600, 0.100, defaults());
-    EXPECT_GT(command.vx_mps, 0.0);
-    EXPECT_GT(command.vy_mps, 0.0);
-}
-
-TEST(ApproachPlanner, VelocitiesPointAtTheError)
-{
-    // A sign error walks the robot away, which looks like a stuck approach.
-    const auto too_far  = plan(0.600, -0.220, defaults());
-    const auto too_near = plan(0.150, -0.220, defaults());
-    EXPECT_GT(too_far.vx_mps, 0.0);
-    EXPECT_LT(too_near.vx_mps, 0.0);
-
-    const auto to_the_left  = plan(0.270, 0.100, defaults());
-    const auto to_the_right = plan(0.270, -0.500, defaults());
-    EXPECT_GT(to_the_left.vy_mps, 0.0);
-    EXPECT_LT(to_the_right.vy_mps, 0.0);
+    const auto limits = defaults();
+    // Forward is irreducible at about 0.29 m, so a small gap is closed by deliberately going too
+    // far and reversing back. `coarse` false is what tells the caller not to stop early.
+    const auto command = planApproach(
+        limits.target_x_m + limits.forward_tolerance_m + 0.02,
+        limits.target_y_m,
+        limits);
+    ASSERT_EQ(command.move, ApproachMove::kStep);
+    EXPECT_FALSE(command.coarse);
 }
 
 TEST(ApproachPlanner, PastTheWindowIsRecoveredByReversing)
 {
-    // Being too close is not terminal: the gait reverses about as well as it advances.
-    const auto command = plan(0.120, -0.220, defaults());
-    EXPECT_EQ(command.state, ApproachState::kClosing);
-    EXPECT_LE(command.vx_mps, -gait().min_speed_x_mps);
+    const auto limits = defaults();
+    // Coming too far costs no turning. g1_gait_shaper refuses a planner's backup speeds but
+    // passes a deliberate -0.60, which the policy measures at -0.247 m/s.
+    const double past    = limits.target_x_m - limits.forward_tolerance_m - 0.02;
+    const auto   command = planApproach(past, limits.target_y_m, limits);
+    ASSERT_EQ(command.move, ApproachMove::kReverse);
+    EXPECT_LT(command.forward_error_m, 0.0);
 }
 
 TEST(ApproachPlanner, OnlyTheObjectBeingUnderTheRobotIsTerminal)
 {
     const auto limits = defaults();
-    EXPECT_EQ(plan(limits.min_forward_m - 0.001, -0.220, limits).state, ApproachState::kOvershot);
-    EXPECT_EQ(plan(limits.min_forward_m + 0.001, -0.220, limits).state, ApproachState::kClosing);
+    EXPECT_EQ(
+        moveFor(limits.min_forward_m - 0.01, limits.target_y_m, limits),
+        ApproachMove::kOvershot);
 }
 
-TEST(ApproachPlanner, HeadingIsHeldWhileClosingButIsNotPartOfArriving)
-{
-    const auto   limits = defaults();
-    const double off    = limits.heading_tolerance_rad + 0.2;
-
-    // Inside the window on both axes: arrived, and no yaw even though the robot is not square.
-    const auto arrived = planApproach(0.270, -0.220, off, limits, gait());
-    EXPECT_EQ(arrived.state, ApproachState::kArrived);
-    EXPECT_DOUBLE_EQ(arrived.yaw_rate_rps, 0.0);
-
-    // Outside it: the same heading error now gets corrected, in the direction of the error.
-    const auto closing = planApproach(0.600, -0.220, off, limits, gait());
-    EXPECT_EQ(closing.state, ApproachState::kClosing);
-    EXPECT_GT(closing.yaw_rate_rps, 0.0);
-    EXPECT_LT(planApproach(0.600, -0.220, -off, limits, gait()).yaw_rate_rps, 0.0);
-}
-
-TEST(ApproachPlanner, SmallHeadingErrorsAreLeftAloneRatherThanFloored)
-{
-    // Yaw has no deadband, so small corrections are not floored.
-    const auto limits = defaults();
-    const auto command =
-        planApproach(0.600, -0.220, limits.heading_tolerance_rad - 0.01, limits, gait());
-    EXPECT_DOUBLE_EQ(command.yaw_rate_rps, 0.0);
-}
-
-TEST(ApproachPlanner, YawIsCappedInBothDirections)
+TEST(ApproachPlanner, LateralIsStrafedAndGoesTowardTheObject)
 {
     const auto limits = defaults();
-    EXPECT_DOUBLE_EQ(
-        planApproach(0.600, -0.220, 3.0, limits, gait()).yaw_rate_rps,
-        gait().max_yaw_rate_rps);
-    EXPECT_DOUBLE_EQ(
-        planApproach(0.600, -0.220, -3.0, limits, gait()).yaw_rate_rps,
-        -gait().max_yaw_rate_rps);
+    EXPECT_GT(planApproach(limits.target_x_m, limits.target_y_m + 0.30, limits).lateral_sign, 0.0);
+    EXPECT_LT(planApproach(limits.target_x_m, limits.target_y_m - 0.30, limits).lateral_sign, 0.0);
+    EXPECT_EQ(moveFor(limits.target_x_m, limits.target_y_m + 0.30, limits), ApproachMove::kStrafe);
 }
 
-TEST(ApproachPlanner, ErrorsAreReportedWhateverTheState)
+TEST(ApproachPlanner, ForwardIsCorrectedBeforeLateral)
 {
-    const auto command = plan(0.500, -0.100, defaults());
-    EXPECT_NEAR(command.forward_error_m, 0.230, 1e-9);
-    EXPECT_NEAR(command.lateral_error_m, 0.120, 1e-9);
+    const auto limits = defaults();
+    // Not arbitrary: the forward drive is the move that covers real distance, and the lateral
+    // error it leaves behind is cheap to strafe out afterwards. The other order would strafe to
+    // a place the next drive walks away from.
+    EXPECT_EQ(
+        moveFor(limits.target_x_m + 1.0, limits.target_y_m + 0.5, limits),
+        ApproachMove::kStep);
+}
+
+TEST(ApproachPlanner, EveryRegionMapsToAMoveTheCallerHandles)
+{
+    const auto limits = defaults();
+    // A plan the caller has no handler for is a hang, not an error -- silent and mid-mission.
+    // This sweep pins every position to a move that is not kInvalid, so a new move can only be
+    // added alongside its handling.
+    for (double fwd : { -0.30, -0.05, 0.05, 0.30, 1.00 })
+    {
+        for (double lat : { -0.30, 0.0, 0.30 })
+        {
+            const auto move = moveFor(limits.target_x_m + fwd, limits.target_y_m + lat, limits);
+            EXPECT_NE(move, ApproachMove::kInvalid) << "fwd " << fwd << " lat " << lat;
+        }
+    }
 }
 
 TEST(ApproachPlanner, UnusableLimitsAreRefusedRatherThanAimedAt)
 {
     EXPECT_TRUE(limitsAreUsable(defaults()));
 
-    auto no_window                = defaults();
-    no_window.forward_tolerance_m = 0.0;
-    EXPECT_FALSE(limitsAreUsable(no_window));
+    auto no_room          = defaults();
+    no_room.min_forward_m = no_room.target_x_m;
+    EXPECT_FALSE(limitsAreUsable(no_room)) << "the window would sit entirely inside the robot";
 
-    // The floor at or above the window's near end turns the recoverable overshoot into an abort.
-    auto floor_too_high          = defaults();
-    floor_too_high.min_forward_m = floor_too_high.target_x_m;
-    EXPECT_FALSE(limitsAreUsable(floor_too_high));
+    auto still             = defaults();
+    still.step_threshold_m = 0.0;
+    EXPECT_FALSE(limitsAreUsable(still));
 
-    EXPECT_EQ(plan(0.270, -0.220, no_window).state, ApproachState::kInvalid);
-}
-
-TEST(ApproachPlanner, UnusableGaitLimitsAreRefusedRatherThanCommanded)
-{
-    EXPECT_TRUE(gaitLimitsAreUsable(gait()));
-
-    // A floor above its ceiling would drive at that speed however close the robot got.
-    auto inverted            = gait();
-    inverted.min_speed_x_mps = 0.9;
-    inverted.max_speed_x_mps = 0.4;
-    EXPECT_FALSE(gaitLimitsAreUsable(inverted));
-
-    EXPECT_EQ(planApproach(0.600, -0.220, 0.0, defaults(), inverted).state, ApproachState::kInvalid);
+    EXPECT_EQ(moveFor(1.0, 0.0, no_room), ApproachMove::kInvalid);
 }
 
 TEST(ApproachPlanner, TheLeftArmWindowIsTheRightArmWindowMirrored)
@@ -186,71 +131,8 @@ TEST(ApproachPlanner, TheLeftArmWindowIsTheRightArmWindowMirrored)
     auto left       = defaults();
     left.target_y_m = -left.target_y_m;
 
-    const auto right_side = plan(0.270, -0.220, defaults());
-    const auto left_side  = plan(0.270, 0.220, left);
-    EXPECT_EQ(right_side.state, ApproachState::kArrived);
-    EXPECT_EQ(left_side.state, ApproachState::kArrived);
-
-    // And an object on the wrong side is driven across, not accepted.
-    EXPECT_EQ(plan(0.270, 0.220, defaults()).state, ApproachState::kClosing);
-}
-
-TEST(ApproachSettled, JustBeyondTheFarEdgeIsInReachButNotBeyondTheSlack)
-{
-    const auto   limits = defaults();
-    const double edge   = limits.target_x_m + limits.forward_tolerance_m;
-    EXPECT_TRUE(settledInReach(limits.target_x_m, limits.target_y_m, limits));
-    EXPECT_TRUE(settledInReach(edge + 0.030, limits.target_y_m, limits));
-    EXPECT_FALSE(settledInReach(edge + limits.settle_slack_m + 0.005, limits.target_y_m, limits));
-    EXPECT_FALSE(settledInReach(
-        limits.target_x_m - limits.forward_tolerance_m - 0.005,
-        limits.target_y_m,
-        limits))
-        << "nearer than the window the pregrasp has no IK: no slack on that side";
-    EXPECT_FALSE(settledInReach(
-        limits.target_x_m,
-        limits.target_y_m + limits.lateral_tolerance_m + 0.005,
-        limits));
-}
-
-TEST(ApproachNudge, JustOutsideSidewaysIsNudgedTowardTheTarget)
-{
-    const auto limits = defaults();
-    const auto left   = planNudge(
-        limits.target_x_m,
-        limits.target_y_m + limits.lateral_tolerance_m + 0.020,
-        limits,
-        gait());
-    ASSERT_TRUE(left.has_value());
-    EXPECT_DOUBLE_EQ(left->vy_mps, gait().min_speed_y_mps);
-    EXPECT_DOUBLE_EQ(left->seconds, gait().nudge_y_s);
-    const auto right = planNudge(
-        limits.target_x_m + limits.forward_tolerance_m + 0.020,
-        limits.target_y_m - limits.lateral_tolerance_m - 0.020,
-        limits,
-        gait());
-    ASSERT_TRUE(right.has_value()) << "in reach ahead with the slack, so only sideways is out";
-    EXPECT_DOUBLE_EQ(right->vy_mps, -gait().min_speed_y_mps);
-}
-
-TEST(ApproachNudge, NoneInReachOutOfReachAheadOrFarOutSideways)
-{
-    const auto limits = defaults();
-    EXPECT_FALSE(planNudge(limits.target_x_m, limits.target_y_m, limits, gait()).has_value());
-    EXPECT_FALSE(planNudge(
-                     limits.target_x_m,
-                     limits.target_y_m + limits.lateral_tolerance_m + limits.nudge_band_m + 0.01,
-                     limits,
-                     gait())
-                     .has_value())
-        << "further out sideways, a drive does better";
-    EXPECT_FALSE(planNudge(
-                     limits.target_x_m + limits.forward_tolerance_m + limits.settle_slack_m + 0.02,
-                     limits.target_y_m + limits.lateral_tolerance_m + 0.02,
-                     limits,
-                     gait())
-                     .has_value())
-        << "out of reach ahead: only a drive closes that";
+    EXPECT_EQ(moveFor(left.target_x_m, left.target_y_m, left), ApproachMove::kDone);
+    EXPECT_EQ(moveFor(left.target_x_m, left.target_y_m, defaults()), ApproachMove::kStrafe);
 }
 
 }  // namespace

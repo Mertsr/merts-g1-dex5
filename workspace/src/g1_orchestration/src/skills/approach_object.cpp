@@ -1,8 +1,3 @@
-/**
- * @file approach_object.cpp
- * @brief Ports and goal for the ApproachObject leaf.
- */
-
 #include "g1_orchestration/skills/approach_object.hpp"
 
 #include <string>
@@ -24,8 +19,8 @@ BT::PortsList ApproachObject::providedPorts()
         ports::arm(),
         BT::InputPort<double>(
             "working_yaw",
-            "Heading to hold while approaching, usually NavigateToPose's goal_yaw; unused with "
-            "use_current_heading."),
+            "Heading to hold while approaching, usually the staging goal's goal_yaw. Ignored "
+            "when use_current_heading is true."),
         BT::InputPort<bool>(
             "use_current_heading",
             false,
@@ -45,7 +40,10 @@ bool ApproachObject::fillGoal(Goal& goal)
 
     goal.use_current_heading = getInput<bool>("use_current_heading").value_or(false);
 
-    // Required unless use_current_heading: a default would silently mean "face +x".
+    // working_yaw is required UNLESS the caller asked to keep the current heading. Defaulting it
+    // would silently mean "face +x", which is a valid yaw and almost never the right one: the
+    // skill would approach square to nothing and the failure would read as bad geometry rather
+    // than a missing port.
     const auto working_yaw = getInput<double>("working_yaw");
     if (!goal.use_current_heading && !working_yaw)
     {

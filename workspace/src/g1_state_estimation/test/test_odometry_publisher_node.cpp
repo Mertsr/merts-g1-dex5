@@ -3,7 +3,7 @@
  * @brief In-process lifecycle tests for the odom -> base publisher, both sources.
  *
  * Runs on an isolated ROS_DOMAIN_ID so a sim or another test on the machine cannot feed it
- * real data.
+ * real data, same pattern as g1_locomotion's test_loco_bridge_node.
  */
 
 #include <gmock/gmock.h>
@@ -25,8 +25,9 @@
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rosgraph_msgs/msg/clock.hpp"
-#include "sensor_msgs/msg/imu.hpp"
 #include "tf2_msgs/msg/tf_message.hpp"
+#include "unitree_go/msg/sport_mode_state.hpp"
+#include "unitree_hg/msg/low_state.hpp"
 
 using g1_state_estimation::G1OdometryPublisher;
 using namespace std::chrono_literals;
@@ -43,8 +44,9 @@ rclcpp::NodeOptions optionsWithSource(const std::string& source, bool use_sim_ti
         rclcpp::Parameter("source_timeout_ms", 200.0),
         rclcpp::Parameter("wall_timeout_ms", 300.0),
         rclcpp::Parameter("start_height_m", 0.793),
-        // One edge carrying the whole pose, so these suites see the source's pose unprojected.
-        // The split chain has its own suites below.
+        // One edge carrying the whole pose, so these suites assert against the pose the source
+        // reports rather than against its ground projection. The split chain has its own
+        // suites further down.
         rclcpp::Parameter("base_frame_id", "base_link"),
         rclcpp::Parameter("use_sim_time", use_sim_time),
     });
@@ -84,13 +86,17 @@ makeLidarOdometry(const rclcpp::Time& stamp, double x, double y, double z, doubl
     return msg;
 }
 
-/// The ground-truth source with the split chain of g1_odometry_publisher_converged.yaml, and
-/// test-sized rate and timeouts.
-rclcpp::NodeOptions optionsForGroundTruth(double max_tilt_deg = 80.0)
+/// The converged unitree_mujoco track: split chain, both source topics.
+///
+/// The frames and the source mirror config/g1_odometry_publisher_converged.yaml deliberately;
+/// that the shipped file really loads is covered end to end by g1_navigation's
+/// test_scan_pipeline, which asserts the same chain against a live sim. The rates and timeouts
+/// are faster than the shipped ones on purpose, so these suites do not wait on real budgets.
+rclcpp::NodeOptions optionsForConverged(double max_tilt_deg = 80.0)
 {
     rclcpp::NodeOptions options;
     options.parameter_overrides({
-        rclcpp::Parameter("odometry_source", "ground_truth"),
+        rclcpp::Parameter("odometry_source", "sim_sportmodestate"),
         rclcpp::Parameter("publish_rate_hz", 100.0),
         rclcpp::Parameter("source_timeout_ms", 500.0),
         rclcpp::Parameter("wall_timeout_ms", 1000.0),
@@ -102,7 +108,16 @@ rclcpp::NodeOptions optionsForGroundTruth(double max_tilt_deg = 80.0)
     return options;
 }
 
-geometry_msgs::msg::Quaternion quaternionFromRpy(double roll, double pitch, double yaw)
+unitree_go::msg::SportModeState makeSportState(double x, double y, double z)
+{
+    unitree_go::msg::SportModeState msg;
+    msg.position = { static_cast<float>(x), static_cast<float>(y), static_cast<float>(z) };
+    msg.velocity = { 0.0F, 0.0F, 0.0F };
+    return msg;
+}
+
+/// LowState carrying only the attitude. quaternion is w-first, matching Unitree's wire order.
+unitree_hg::msg::LowState makeLowState(double roll, double pitch, double yaw)
 {
     const double cr = std::cos(roll * 0.5);
     const double sr = std::sin(roll * 0.5);
@@ -111,31 +126,11 @@ geometry_msgs::msg::Quaternion quaternionFromRpy(double roll, double pitch, doub
     const double cy = std::cos(yaw * 0.5);
     const double sy = std::sin(yaw * 0.5);
 
-    geometry_msgs::msg::Quaternion q;
-    q.w = (cr * cp * cy) + (sr * sp * sy);
-    q.x = (sr * cp * cy) - (cr * sp * sy);
-    q.y = (cr * sp * cy) + (sr * cp * sy);
-    q.z = (cr * cp * sy) - (sr * sp * cy);
-    return q;
-}
-
-/// What the sensor relay sends: pose and twist in one message, twist in the body frame.
-nav_msgs::msg::Odometry makeGroundTruth(
-    const rclcpp::Time& stamp, double x, double y, double z, double roll, double pitch, double yaw)
-{
-    nav_msgs::msg::Odometry msg;
-    msg.header.stamp          = stamp;
-    msg.pose.pose.position.x  = x;
-    msg.pose.pose.position.y  = y;
-    msg.pose.pose.position.z  = z;
-    msg.pose.pose.orientation = quaternionFromRpy(roll, pitch, yaw);
-    return msg;
-}
-
-sensor_msgs::msg::Imu makeImu(double roll, double pitch, double yaw)
-{
-    sensor_msgs::msg::Imu msg;
-    msg.orientation = quaternionFromRpy(roll, pitch, yaw);
+    unitree_hg::msg::LowState msg;
+    msg.imu_state.quaternion[0] = static_cast<float>(cr * cp * cy + sr * sp * sy);
+    msg.imu_state.quaternion[1] = static_cast<float>(sr * cp * cy - cr * sp * sy);
+    msg.imu_state.quaternion[2] = static_cast<float>(cr * sp * cy + sr * cp * sy);
+    msg.imu_state.quaternion[3] = static_cast<float>(cr * cp * sy - sr * sp * cy);
     return msg;
 }
 
@@ -149,17 +144,20 @@ double tiltOf(const geometry_msgs::msg::Quaternion& q)
     return std::acos(std::max(-1.0, std::min(1.0, 1.0 - 2.0 * (q.x * q.x + q.y * q.y))));
 }
 
-/// Drives a ground-truth node with one attitude and collects what reaches /tf and ~/odom.
-class GroundTruthHarness
+/// Drives a converged-source node with one attitude and collects what reaches /tf and ~/odom.
+class ConvergedHarness
 {
 public:
-    explicit GroundTruthHarness(std::shared_ptr<G1OdometryPublisher> node, const std::string& name)
+    explicit ConvergedHarness(std::shared_ptr<G1OdometryPublisher> node, const std::string& name)
       : node_(std::move(node))
       , helper_(std::make_shared<rclcpp::Node>(name))
     {
         const auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
-        truth_pub_     = helper_->create_publisher<nav_msgs::msg::Odometry>(
-            "/g1_odometry_publisher/base_state",
+        sport_pub_     = helper_->create_publisher<unitree_go::msg::SportModeState>(
+            "/g1_odometry_publisher/sport_state",
+            qos);
+        low_pub_ = helper_->create_publisher<unitree_hg::msg::LowState>(
+            "/g1_odometry_publisher/imu_state",
             qos);
         tf_sub_ = helper_->create_subscription<tf2_msgs::msg::TFMessage>(
             "/tf",
@@ -181,7 +179,8 @@ public:
     {
         for (int i = 0; i < count; ++i)
         {
-            truth_pub_->publish(makeGroundTruth(helper_->now(), x, y, z, roll, pitch, yaw));
+            sport_pub_->publish(makeSportState(x, y, z));
+            low_pub_->publish(makeLowState(roll, pitch, yaw));
             spinFor(nodes_, 20ms);
         }
         spinFor(nodes_, 100ms);
@@ -212,7 +211,8 @@ public:
 private:
     std::shared_ptr<G1OdometryPublisher>                               node_;
     std::shared_ptr<rclcpp::Node>                                      helper_;
-    rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr              truth_pub_;
+    rclcpp::Publisher<unitree_go::msg::SportModeState>::SharedPtr      sport_pub_;
+    rclcpp::Publisher<unitree_hg::msg::LowState>::SharedPtr            low_pub_;
     rclcpp::Subscription<tf2_msgs::msg::TFMessage>::SharedPtr          tf_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr           odom_sub_;
     std::vector<rclcpp::node_interfaces::NodeBaseInterface::SharedPtr> nodes_;
@@ -294,8 +294,9 @@ public:
         lio_pub_       = helper_->create_publisher<nav_msgs::msg::Odometry>(
             "/g1_odometry_publisher/lidar_odometry",
             qos);
-        imu_pub_ =
-            helper_->create_publisher<sensor_msgs::msg::Imu>("/g1_odometry_publisher/imu", qos);
+        low_pub_ = helper_->create_publisher<unitree_hg::msg::LowState>(
+            "/g1_odometry_publisher/imu_state",
+            qos);
         tf_sub_ = helper_->create_subscription<tf2_msgs::msg::TFMessage>(
             "/tf",
             rclcpp::QoS(200),
@@ -310,13 +311,16 @@ public:
         spinFor(nodes_, 200ms);
     }
 
-    /// One LiDAR sample under a level attitude, stamped now. The attitude lands first, the
-    /// ordering the robot gives for free: the IMU broadcaster runs far faster than 10 Hz scans.
+    /// One LiDAR sample under a level attitude, stamped now.
+    ///
+    /// The attitude goes first and is allowed to land before the pose, which is the ordering
+    /// the robot gives for free: LowState runs at 500 Hz against 10 Hz scans, so an attitude
+    /// is always already in hand by the time a scan resolves.
     void feed(double x, double y, double z, double yaw, bool with_imu = true)
     {
         if (with_imu)
         {
-            imu_pub_->publish(makeImu(0.0, 0.0, 0.0));
+            low_pub_->publish(makeLowState(0.0, 0.0, 0.0));
             spinFor(nodes_, 10ms);
         }
         lio_pub_->publish(makeLidarOdometry(helper_->now(), x, y, z, yaw));
@@ -332,7 +336,7 @@ private:
     std::shared_ptr<G1OdometryPublisher>                               node_;
     std::shared_ptr<rclcpp::Node>                                      helper_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr              lio_pub_;
-    rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr                imu_pub_;
+    rclcpp::Publisher<unitree_hg::msg::LowState>::SharedPtr            low_pub_;
     rclcpp::Subscription<tf2_msgs::msg::TFMessage>::SharedPtr          tf_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr           odom_sub_;
     std::vector<rclcpp::node_interfaces::NodeBaseInterface::SharedPtr> nodes_;
@@ -382,8 +386,9 @@ TEST(OdometryPublisherFastLio, ConfiguresAndActivates)
 
 TEST(OdometryPublisherFastLio, PublishesNothingUntilTheImuHasLevelledTheOrigin)
 {
-    // Without an attitude there is no way to know which way is up, and publishing anyway would
-    // tilt odom by the robot's initial lean for good.
+    // FAST-LIO's start frame is wherever its IMU happened to be pointing, so without an
+    // attitude to level against there is no way to know which way is up. Publishing anyway
+    // would tilt odom by the robot's initial lean, permanently.
     auto node = std::make_shared<G1OdometryPublisher>(optionsWithSource("fast_lio"));
     ASSERT_EQ(node->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
     ASSERT_EQ(node->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
@@ -408,8 +413,9 @@ TEST(OdometryPublisherFastLio, LatchesTheOriginThenReportsMotionRelativeToIt)
 
     FastLioHarness harness(node, "fastlio_latch_helper");
 
-    // Non-trivial on purpose: FAST-LIO's real first sample is identity, which a broken
-    // composition would pass.
+    // A deliberately non-trivial start pose. In practice FAST-LIO's first sample is the
+    // identity, since its start frame IS the body frame at init -- which would let a broken
+    // composition pass by doing nothing at all.
     const double start_x   = 0.4;
     const double start_y   = -0.2;
     const double start_z   = 0.05;
@@ -502,8 +508,10 @@ TEST(OdometryPublisherFastLio, StopsPublishingWhenTheSourceGoesSilent)
 
 TEST(OdometryPublisherSimTime, StopsPublishingWhenSimTimeItselfFreezes)
 {
-    // Under sim time a wedged simulator freezes /clock and the stamps together, so only a
-    // wall-clock budget notices.
+    // The failure the wall-clock test cannot see. On the simulator track /clock comes from the
+    // SAME process as the sensor data, so when that process wedges, sim time stops with it:
+    // `now() - last_sample_stamp_` stays pinned near zero and a sim-time-only staleness check
+    // never fires, leaving a frozen pose broadcast as if it were live.
     auto node = std::make_shared<G1OdometryPublisher>(optionsWithSource("fast_lio", true));
     ASSERT_EQ(node->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
     ASSERT_EQ(node->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
@@ -515,8 +523,8 @@ TEST(OdometryPublisherSimTime, StopsPublishingWhenSimTimeItselfFreezes)
     auto       lio_pub = helper->create_publisher<nav_msgs::msg::Odometry>(
         "/g1_odometry_publisher/lidar_odometry",
         qos);
-    auto imu_pub =
-        helper->create_publisher<sensor_msgs::msg::Imu>("/g1_odometry_publisher/imu", qos);
+    auto low_pub =
+        helper->create_publisher<unitree_hg::msg::LowState>("/g1_odometry_publisher/imu_state", qos);
 
     std::size_t transform_count = 0;
     auto        tf_sub          = helper->create_subscription<tf2_msgs::msg::TFMessage>(
@@ -540,24 +548,26 @@ TEST(OdometryPublisherSimTime, StopsPublishingWhenSimTimeItselfFreezes)
         rosgraph_msgs::msg::Clock clock_msg;
         clock_msg.clock = sim_now;
         clock_pub->publish(clock_msg);
-        imu_pub->publish(makeImu(0.0, 0.0, 0.0));
+        low_pub->publish(makeLowState(0.0, 0.0, 0.0));
         lio_pub->publish(makeLidarOdometry(sim_now, 0.01 * i, 0.0, 0.0, 0.0));
         spinFor(nodes, 20ms);
     }
     ASSERT_GT(transform_count, 0U) << "never published while sim time was advancing";
 
-    // Wedge: /clock and the stamps stop, but samples keep arriving.
+    // Now the simulator wedges: /clock stops AND the stamp stops advancing, but samples
+    // keep arriving, so the node still has fresh-looking data on a frozen clock. Wall time
+    // is the only thing left that can notice.
     const std::size_t before_freeze = transform_count;
     for (int i = 0; i < 15; ++i)
     {
-        imu_pub->publish(makeImu(0.0, 0.0, 0.0));
+        low_pub->publish(makeLowState(0.0, 0.0, 0.0));
         lio_pub->publish(makeLidarOdometry(sim_now, 0.25, 0.0, 0.0, 0.0));
         spinFor(nodes, 40ms);
     }
     const std::size_t after_timeout = transform_count;
     for (int i = 0; i < 10; ++i)
     {
-        imu_pub->publish(makeImu(0.0, 0.0, 0.0));
+        low_pub->publish(makeLowState(0.0, 0.0, 0.0));
         lio_pub->publish(makeLidarOdometry(sim_now, 0.25, 0.0, 0.0, 0.0));
         spinFor(nodes, 40ms);
     }
@@ -570,15 +580,18 @@ TEST(OdometryPublisherSimTime, StopsPublishingWhenSimTimeItselfFreezes)
            "stays at zero forever, so only a wall-clock budget can catch this.";
 }
 
-// --- Ground truth: the split chain and the tilt guard ---------------------------------------
+// --- Converged track: the split chain and the tilt guard ------------------------------------
+//
+// The suites above never reach this code: sim_sportmodestate is the only source that publishes
+// two edges, and the tilt guard lives on a callback only that source subscribes to.
 
-TEST(OdometryPublisherGroundTruth, PublishesTheSplitChainWithOneStamp)
+TEST(OdometryPublisherConverged, PublishesTheSplitChainWithOneStamp)
 {
-    auto node = std::make_shared<G1OdometryPublisher>(optionsForGroundTruth());
+    auto node = std::make_shared<G1OdometryPublisher>(optionsForConverged());
     ASSERT_EQ(node->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
     ASSERT_EQ(node->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
 
-    GroundTruthHarness harness(node, "ground_truth_split_helper");
+    ConvergedHarness harness(node, "converged_split_helper");
     // A walking attitude: a few degrees of roll and pitch under a real heading.
     const double roll   = -0.05;
     const double pitch  = 0.0847;
@@ -624,13 +637,13 @@ TEST(OdometryPublisherGroundTruth, PublishesTheSplitChainWithOneStamp)
     EXPECT_TRUE(found_pair) << "the two edges were never published in one message";
 }
 
-TEST(OdometryPublisherGroundTruth, OdometryDescribesTheFootprintNotTheBody)
+TEST(OdometryPublisherConverged, OdometryDescribesTheFootprintNotTheBody)
 {
-    auto node = std::make_shared<G1OdometryPublisher>(optionsForGroundTruth());
+    auto node = std::make_shared<G1OdometryPublisher>(optionsForConverged());
     ASSERT_EQ(node->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
     ASSERT_EQ(node->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
 
-    GroundTruthHarness harness(node, "ground_truth_odom_helper");
+    ConvergedHarness harness(node, "converged_odom_helper");
     harness.feed(1.0, 2.0, 0.75, 0.0, 0.1, 0.3);
 
     ASSERT_FALSE(harness.odoms.empty()) << "nothing published on ~/odom";
@@ -648,15 +661,15 @@ TEST(OdometryPublisherGroundTruth, OdometryDescribesTheFootprintNotTheBody)
     EXPECT_NEAR(odom.pose.pose.position.y, foot->transform.translation.y, 1e-12);
 }
 
-TEST(OdometryPublisherGroundTruth, TiltGuardHoldsTheLastGoodHeadingAndWarnsOnce)
+TEST(OdometryPublisherConverged, TiltGuardHoldsTheLastGoodHeadingAndWarnsOnce)
 {
     // 10 degrees, so the "past the threshold" case is an ordinary attitude rather than a
-    // near-singular one: this tests the guard, not the arithmetic at 90 degrees.
-    auto node = std::make_shared<G1OdometryPublisher>(optionsForGroundTruth(10.0));
+    // near-singular one -- this is testing the guard, not the arithmetic at 90 degrees.
+    auto node = std::make_shared<G1OdometryPublisher>(optionsForConverged(10.0));
     ASSERT_EQ(node->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
     ASSERT_EQ(node->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
 
-    GroundTruthHarness harness(node, "ground_truth_tilt_helper");
+    ConvergedHarness harness(node, "converged_tilt_helper");
 
     // Upright and well inside the limit: the heading tracks.
     const double good_yaw = 0.4;
@@ -681,28 +694,35 @@ TEST(OdometryPublisherGroundTruth, TiltGuardHoldsTheLastGoodHeadingAndWarnsOnce)
     EXPECT_NEAR(yawOf(tilted->transform.rotation), good_yaw, 1e-4)
         << "past the limit the last well-conditioned heading is held";
 
-    // The attitude itself keeps going out, because a fallen robot really is tilted and hiding it
+    // The attitude itself keeps going out -- a fallen robot really is tilted, and hiding that
     // would be its own lie.
     const auto body = harness.latest("base_footprint", "pelvis");
     ASSERT_TRUE(body.has_value());
     EXPECT_GT(tiltOf(body->transform.rotation), 0.5) << "the real tilt must still reach TF";
 
-    // Throttled at 2 s. The throttle state is a static at the call site, shared by every test
-    // here, so no other test may tilt past one sample or this goes order-dependent.
+    // Throttled at 2 s, so 15 samples inside that window give one line rather than fifteen.
+    //
+    // RCLCPP_WARN_THROTTLE keeps its last-logged timestamp in a static local at the CALL SITE,
+    // not per node, so every test in this binary shares one 2 s window. Any other test that
+    // drives this branch would silently zero this count. TiltGuardLatchesTheFirstSampleEvenMidFall
+    // is the only other tilted test and it deliberately stops at one sample, which never reaches
+    // the warn. Keep it that way, or this assertion becomes order-dependent.
     EXPECT_EQ(warns, 1) << "expected exactly one throttled warning, got " << warns;
 }
 
-TEST(OdometryPublisherGroundTruth, TiltGuardLatchesTheFirstSampleEvenMidFall)
+TEST(OdometryPublisherConverged, TiltGuardLatchesTheFirstSampleEvenMidFall)
 {
-    // Spawn topple: with no heading to hold yet, the first attitude sets it even past the limit.
-    auto node = std::make_shared<G1OdometryPublisher>(optionsForGroundTruth(10.0));
+    // The documented spawn-topple case: if the very first attitude is already past the limit
+    // there is nothing to hold instead, so it latches rather than publishing a default zero
+    // heading that no sensor ever reported.
+    auto node = std::make_shared<G1OdometryPublisher>(optionsForConverged(10.0));
     ASSERT_EQ(node->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE);
     ASSERT_EQ(node->activate().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE);
 
-    GroundTruthHarness harness(node, "ground_truth_first_sample_helper");
-    const double       yaw = -0.9;
+    ConvergedHarness harness(node, "converged_first_sample_helper");
+    const double     yaw = -0.9;
     // Exactly one sample. A second would take the hold branch and trip the warning throttle
-    // that TiltGuardHoldsTheLastGoodHeadingAndWarnsOnce counts; see the note there.
+    // that TiltGuardHoldsTheLastGoodHeadingAndWarnsOnce counts -- see the note there.
     harness.feed(0.0, 0.0, 0.5, 0.0, 0.7, yaw, /*count=*/1);
 
     const auto foot = harness.latest("odom", "base_footprint");
@@ -710,26 +730,26 @@ TEST(OdometryPublisherGroundTruth, TiltGuardLatchesTheFirstSampleEvenMidFall)
     EXPECT_NEAR(yawOf(foot->transform.rotation), yaw, 1e-3);
 }
 
-TEST(OdometryPublisherGroundTruth, RejectsAnOutOfRangeMaxTilt)
+TEST(OdometryPublisherConverged, RejectsAnOutOfRangeMaxTilt)
 {
     for (double degrees : { 0.0, -5.0, 180.0, 400.0 })
     {
-        auto node = std::make_shared<G1OdometryPublisher>(optionsForGroundTruth(degrees));
+        auto node = std::make_shared<G1OdometryPublisher>(optionsForConverged(degrees));
         EXPECT_EQ(node->configure().id(), lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED)
             << "max_tilt_deg " << degrees << " should not configure";
     }
 }
 
-TEST(OdometryPublisherGroundTruth, RejectsAFrameChainThatCannotExist)
+TEST(OdometryPublisherConverged, RejectsAFrameChainThatCannotExist)
 {
-    auto same = optionsForGroundTruth();
+    auto same = optionsForConverged();
     same.append_parameter_override("pelvis_frame_id", "base_footprint");
     EXPECT_EQ(
         std::make_shared<G1OdometryPublisher>(same)->configure().id(),
         lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED)
         << "a self-loop edge would be rejected by tf2, with an error pointing at tf2";
 
-    auto empty = optionsForGroundTruth();
+    auto empty = optionsForConverged();
     empty.append_parameter_override("base_frame_id", std::string(""));
     EXPECT_EQ(
         std::make_shared<G1OdometryPublisher>(empty)->configure().id(),

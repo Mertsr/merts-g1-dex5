@@ -3,15 +3,19 @@
 
 /**
  * @file arm_authority.hpp
- * @brief Acquiring and releasing the arm and hands, in g1_bringup's activate_arm order.
+ * @brief Acquiring and releasing the arm and hands, in the mandatory order.
  *
- * A component goes active before its controller and inactive after it, since command interfaces
- * exist only while their component is active. test_authority_drift keeps the names in step.
- * Acquired once per tree, not per skill, so the hands never let go between pick and place; the
- * executor releases on every exit, success or failure.
+ * The same sequence as g1_bringup's activate_arm / deactivate_arm scripts, and it has to stay
+ * the same: Humble ties command-interface availability to hardware component state, so the
+ * component goes active before its controller and inactive after it. `test_authority_drift`
+ * asserts the names here still match those scripts.
+ *
+ * Owned by the executor rather than by a skill. control-mode rule 4 asks that a
+ * skill release cleanly on success *or* failure, and at mission scope the only place that can
+ * be guaranteed is around the whole tree -- a skill that acquired per goal would hand the
+ * hands back between pick and place and drop what it was carrying.
  */
 
-#include <cstdint>
 #include <memory>
 #include <rclcpp/rclcpp.hpp>
 #include <string>
@@ -20,80 +24,36 @@
 namespace g1_orchestration
 {
 
-/**
- * @brief A controller to activate, and what it has to displace to get there.
- */
+/// One hardware component and the controller that claims its interfaces.
 struct ControlledPart
 {
-    /// Component to activate first. Empty when it is already active for other reasons.
     std::string component;
     std::string controller;
-    /// Controller holding these joints now, swapped out in the same switch. Empty if none.
-    std::string displaces;
 };
 
-/**
- * @brief The arm, then each hand.
- *
- * @return The parts in acquisition order; releasing walks them in reverse.
- */
+/// The arm, then each hand. Order matters: see `acquireArm`.
 const std::vector<ControlledPart>& controlledParts();
 
 /**
- * @brief What a paired switch should ask controller_manager for, given what it reports now.
+ * @brief Activates the arm component and controller, then each hand.
+ *
+ * The arm is required; a hand is best-effort. A hand that is absent, unpowered or not
+ * publishing state must not stop the arm from being usable, which is exactly what
+ * activate_arm does and why.
+ *
+ * Spins a node of its own for the duration rather than borrowing the executor's: these are
+ * blocking service calls, and spin_until_future_complete on a node an executor already owns
+ * throws rather than waiting.
+ *
+ * @return false only if the ARM failed. A hand that did not come up warns and returns true.
  */
-struct ArmSwitchPlan
-{
-    /// False when the incoming controller cannot take the joints; the outgoing one then stays,
-    /// since an unclaimed joint is unpowered.
-    bool possible{ false };
-    bool already_held{ false };  ///< Incoming already holds them; there is nothing to ask for.
-    bool displace{ false };      ///< Outgoing must be displaced, in the same switch.
-};
+bool acquireArm(const rclcpp::Logger& logger, double timeout_s);
 
 /**
- * @brief Decides the paired arm switch from the two controllers' current states.
+ * @brief Deactivates controllers then components, in reverse.
  *
- * The switch is then made `STRICT`: `BEST_EFFORT` applies whichever half it can, which can
- * deactivate the freeze alone and leave the arm joints unclaimed.
- *
- * @param incoming_state State of the controller that should end up holding the joints, as
- *        controller_manager reports it. Empty if it does not know the controller.
- * @param outgoing_state State of the controller currently holding them, same convention.
- * @return The switch to request. `possible` is false when nothing may be asked for.
- */
-ArmSwitchPlan planArmSwitch(const std::string& incoming_state, const std::string& outgoing_state);
-
-/**
- * @brief How acquireArm found the arm.
- */
-enum class Acquired : std::uint8_t
-{
-    kFailed,   ///< The arm could not be taken.
-    kTaken,    ///< This call took it from the freeze controller.
-    kAlready,  ///< Its trajectory controller was active already: someone else had taken it.
-};
-
-/**
- * @brief Takes the arm, then each hand.
- *
- * The arm is required; each hand is best-effort, so a missing or failed Dex5 leaves the arm
- * usable. Blocks, on a node of its own: spin_until_future_complete throws on an executor's node.
- *
- * @param logger Where progress and failures are reported.
- * @param timeout_s Per-step service budget.
- * @return kFailed only if the arm could not be acquired; a hand that fails only warns. kAlready
- *         says the arm was taken before this call, so what its hands hold is not known.
- */
-Acquired acquireArm(const rclcpp::Logger& logger, double timeout_s);
-
-/**
- * @brief Hands each part back, in reverse: controllers first, then components.
- *
- * Best-effort, and does not stop partway: it also runs on the failure path.
- *
- * @param logger Where failures are reported.
- * @param timeout_s Per-step service budget.
+ * Best-effort throughout and never throws: this runs on the failure path too, where giving up
+ * partway would leave a controller claiming interfaces of an inactive component.
  */
 void releaseArm(const rclcpp::Logger& logger, double timeout_s);
 

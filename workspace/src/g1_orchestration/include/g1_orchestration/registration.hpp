@@ -16,17 +16,8 @@
 namespace g1_orchestration
 {
 
-/**
- * @brief Registers one leaf under the name a tree XML uses for it.
- *
- * A builder, since registerNodeType<T>() constructs from (name, config) only and a leaf needs
- * the ROS node.
- *
- * @tparam LeafT The leaf class to build.
- * @param factory Factory to register into.
- * @param id The name the tree XML uses.
- * @param context Copied into every instance the factory builds.
- */
+/// The builder form, not registerNodeType<T>(): every leaf needs the ROS node, and the plain
+/// form can only construct from (name, config).
 template <typename LeafT>
 void registerLeaf(BT::BehaviorTreeFactory& factory, const std::string& id, const RosContext& context)
 {
@@ -37,16 +28,12 @@ void registerLeaf(BT::BehaviorTreeFactory& factory, const std::string& id, const
         });
 }
 
-/**
- * @brief Registers every leaf this package provides.
- *
- * Shared by the executor, the tests and the Groot2 model generator.
- */
+/// Registers every leaf this package provides. One place, so the executor, the tests and the
+/// Groot2 model generator cannot see different node sets.
 void registerSkillNodes(BT::BehaviorTreeFactory& factory, const RosContext& context);
 
-/**
- * @brief The Groot2 palette for a factory; shared by the generator and test_node_model.
- */
+/// The Groot2 palette for a factory. Shared by the generator and its drift test so the two
+/// cannot disagree about how the model is produced.
 std::string nodeModelXml(const BT::BehaviorTreeFactory& factory);
 
 }  // namespace g1_orchestration

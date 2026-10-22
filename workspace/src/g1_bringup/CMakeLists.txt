@@ -1,81 +1,110 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.8)
 project(g1_bringup)
-
-include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/g1_common.cmake)
 
 find_package(ament_cmake REQUIRED)
 
-# --- install ---------------------------------------------------------------
+install(DIRECTORY config launch mjcf DESTINATION share/${PROJECT_NAME})
 
-install(DIRECTORY config launch mjcf worlds DESTINATION share/${PROJECT_NAME})
 install(
   PROGRAMS
     scripts/activate_arm
     scripts/deactivate_arm
-    scripts/compare_truth.py
-    scripts/run_summary.py
   DESTINATION lib/${PROJECT_NAME}
 )
-
-# --- tests -----------------------------------------------------------------
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
-  find_package(launch_testing_ament_cmake REQUIRED)
 
-  # ament_cmake_xmllint only covers package.xml, and MuJoCo loads scenes that are not valid XML,
-  # such as a "--" inside a comment.
+  # The scene overlays, checked as XML. ament_cmake_xmllint only covers package.xml, and
+  # MuJoCo's own parser is lenient enough to accept files xmllint rejects -- a "--" inside a
+  # comment is illegal XML but loads fine in the simulator, so it survives until something
+  # else reads the file. Cheap to check, and it has caught that exact mistake twice.
   find_program(XMLLINT_EXECUTABLE xmllint)
   if(XMLLINT_EXECUTABLE)
     file(GLOB _scene_files "${CMAKE_CURRENT_SOURCE_DIR}/mjcf/*.xml")
     add_test(
-      NAME xmllint_scenes_${PROJECT_NAME}
+      NAME xmllint_scenes_g1_bringup
       COMMAND ${XMLLINT_EXECUTABLE} --noout ${_scene_files}
     )
   else()
-    message(WARNING "xmllint not found; skipping xmllint_scenes_${PROJECT_NAME}")
+    message(WARNING "xmllint not found; skipping xmllint_scenes_g1_bringup")
   endif()
 
-  # MuJoCo syncs to CPU time and the policy runs on wall timers, so the simulator suites are load
-  # sensitive: RESOURCE_LOCK serialises them within this ctest run and COST starts the heavy ones
-  # first. CI skips the `simulator` label, since on shared cores they measure the runner.
+  # No clang-format check: this package builds no C++. motion_service_sim's sources, and
+  # their formatting check, live in g1_motion_service_sim.
+  find_program(RUFF_EXECUTABLE ruff)
+  set(_ruff_config "${CMAKE_CURRENT_SOURCE_DIR}/../../ruff.toml")
+  if(RUFF_EXECUTABLE AND EXISTS "${_ruff_config}")
+    # ruff skips extensionless files — name them explicitly.
+    add_test(
+      NAME ruff_check_g1_bringup
+      COMMAND ${RUFF_EXECUTABLE} check --config ${_ruff_config}
+        ${CMAKE_CURRENT_SOURCE_DIR}/launch
+        ${CMAKE_CURRENT_SOURCE_DIR}/scripts/activate_arm
+        ${CMAKE_CURRENT_SOURCE_DIR}/scripts/deactivate_arm
+        ${CMAKE_CURRENT_SOURCE_DIR}/test
+    )
+  else()
+    message(WARNING "ruff and/or workspace ruff.toml not found; skipping ruff_check_g1_bringup test")
+  endif()
+
+  # LOAD SENSITIVITY: sim suites are CPU-time-sensitive (MuJoCo syncs to CPU
+  # time; walking policy uses wall timers). Run individually if results are
+  # flaky. RESOURCE_LOCK serializes them; COST ordering puts heavy suites
+  # first and the balance test (test_walk_stand) last.
+  #
+  # That sensitivity is also why they carry LABELS simulator: CI runs on two shared cores,
+  # where these do not measure the stack so much as the runner. `ctest -LE simulator` skips
+  # every one of them, and a new sim suite inherits the exclusion by being labelled rather
+  # than by someone remembering to add it to a list in a workflow file.
+  #
+  # These stay here rather than moving with motion_service_sim's source: every one of
+  # them includes this package's sim.launch.py, and g1_bringup depends on
+  # g1_motion_service_sim, so hosting them there would be a dependency cycle. They also
+  # share one RESOURCE_LOCK, which only serialises within a single ctest invocation --
+  # splitting them across packages would silently drop that.
+  find_package(launch_testing_ament_cmake REQUIRED)
+  add_launch_test(test/test_sim_bringup.launch.py TARGET test_sim_bringup TIMEOUT 120)
+  # Converged sensor track. Own MuJoCo instance, so it shares the g1_bringup lock.
   add_launch_test(test/test_lidar_geometry.launch.py TARGET test_lidar_geometry TIMEOUT 300)
+  set_tests_properties(test_sim_bringup PROPERTIES RESOURCE_LOCK mujoco_sim LABELS simulator)
   set_tests_properties(test_lidar_geometry PROPERTIES RESOURCE_LOCK mujoco_sim LABELS simulator)
+  add_launch_test(test/test_arm_command.launch.py TARGET test_arm_command TIMEOUT 220)
+  set_tests_properties(test_arm_command PROPERTIES RESOURCE_LOCK mujoco_sim LABELS simulator)
+  add_launch_test(test/test_loco.launch.py TARGET test_loco TIMEOUT 180)
+  set_tests_properties(test_loco PROPERTIES RESOURCE_LOCK mujoco_sim LABELS simulator)
 
-  # Here rather than in g1_state_estimation, which this package depends on: launching
-  # sim.launch.py from there would be a cycle.
+  # Core milestone claim: walking policy keeps the robot upright.
+  add_launch_test(test/test_walk_stand.launch.py TARGET test_walk_stand TIMEOUT 240)
+  set_tests_properties(test_walk_stand PROPERTIES RESOURCE_LOCK mujoco_sim LABELS simulator)
+
+  # FAST-LIO odometry against MuJoCo ground truth on a real walk. Lives here rather than in
+  # g1_state_estimation because it launches sim.launch.py, and that dependency edge would be
+  # a cycle from there.
   add_launch_test(test/test_fastlio_odometry.launch.py TARGET test_fastlio_odometry TIMEOUT 300)
-  set_tests_properties(test_fastlio_odometry PROPERTIES
-    RESOURCE_LOCK mujoco_sim LABELS simulator COST 90)
+  set_tests_properties(test_fastlio_odometry PROPERTIES RESOURCE_LOCK mujoco_sim LABELS simulator COST 90)
 
-  # The rt/lowcmd stack under the AGILE policy: standing on its own balance, then walking.
-  add_launch_test(test/test_agile_walk.launch.py TARGET test_agile_walk TIMEOUT 360)
-  set_tests_properties(test_agile_walk PROPERTIES
-    RESOURCE_LOCK mujoco_sim LABELS simulator COST 100)
+  # Full LocoClient authority path with rejection and randomized commands.
+  add_launch_test(test/test_walk_teleop.launch.py TARGET test_walk_teleop TIMEOUT 400)
+  set_tests_properties(test_walk_teleop PROPERTIES RESOURCE_LOCK mujoco_sim LABELS simulator)
 
-  # canopy's acceptance run: explores the apartment and scores rooms, coverage and objects against
-  # its ground truth. Tens of minutes; the timeouts sit above the test's own worst case (about
-  # 3830 s, and 5330 s from no map) so it can fail with a message rather than be killed.
-  add_launch_test(test/test_explore_apartment.launch.py
-    TARGET test_explore_apartment TIMEOUT 4200)
-  set_tests_properties(test_explore_apartment PROPERTIES
-    LABELS simulator RESOURCE_LOCK mujoco_sim COST 3000)
-  # The same run from no map at all: slam_toolbox builds it while the robot explores.
-  add_launch_test(test/test_explore_apartment.launch.py
-    TARGET test_explore_apartment_mapping TIMEOUT 6000)
-  set_tests_properties(test_explore_apartment_mapping PROPERTIES
-    LABELS simulator RESOURCE_LOCK mujoco_sim COST 5000
-    ENVIRONMENT "G1_EXPLORE_TEST_MAPPING=1")
+  # Acceptance bar: walking + arm trajectory in one session.
+  add_launch_test(test/test_walk_and_arm.launch.py TARGET test_walk_and_arm TIMEOUT 400)
+  set_tests_properties(test_walk_and_arm PROPERTIES RESOURCE_LOCK mujoco_sim LABELS simulator)
 
-  # DDS drain gap between simulator suites.
-  add_test(NAME sim_settle_gap COMMAND ${CMAKE_COMMAND} -E sleep 5)
-  set_tests_properties(sim_settle_gap PROPERTIES
-    RESOURCE_LOCK mujoco_sim LABELS simulator COST 50)
+  # DDS drain gap before the critical balance test.
+  set(_SIM_SETTLE_S 5)
+  add_test(NAME sim_settle_gap COMMAND ${CMAKE_COMMAND} -E sleep ${_SIM_SETTLE_S})
+  set_tests_properties(sim_settle_gap PROPERTIES RESOURCE_LOCK mujoco_sim LABELS simulator COST 50)
 
-  # The world generator runs on the host, but is linted with the rest.
-  list(APPEND G1_PYTHON_DIRS tools)
-  g1_add_lint_tests()
+  # COST descending = execution order.
+  set_tests_properties(test_walk_teleop PROPERTIES COST 100)
+  set_tests_properties(test_walk_and_arm PROPERTIES COST 90)
+  set_tests_properties(test_arm_command PROPERTIES COST 80)
+  set_tests_properties(test_loco PROPERTIES COST 70)
+  set_tests_properties(test_sim_bringup PROPERTIES COST 60)
+  set_tests_properties(test_walk_stand PROPERTIES COST 10)
 endif()
 
 ament_package()

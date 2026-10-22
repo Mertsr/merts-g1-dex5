@@ -1,8 +1,3 @@
-/**
- * @file navigate_to_pose.cpp
- * @brief Ports, goal and result judgement for the NavigateToPose leaf.
- */
-
 #include "g1_orchestration/skills/navigate_to_pose.hpp"
 
 #include <tf2/LinearMath/Quaternion.h>
@@ -60,23 +55,23 @@ bool NavigateToPose::fillGoal(Goal& goal)
         RCLCPP_ERROR(node_->get_logger(), "[%s] %s", name().c_str(), station.error().c_str());
         return false;
     }
-    goal.pose          = toPose(*station, getInput<std::string>("frame_id").value_or("map"));
+    goal.pose = toPose(*station, getInput<std::string>("frame_id").value_or("map"));
+    // Nav2 picks its own default when this is empty, so a tree that does not care says nothing.
     goal.behavior_tree = getInput<std::string>("behavior_tree").value_or("");
 
+    // Published so the approach that follows can hold the heading this goal arrived on, rather
+    // than needing a matching literal typed by hand in both places.
     setOutput("goal_yaw", station->yaw);
     return true;
 }
 
 BT::NodeStatus NavigateToPose::judgeResult(const WrappedResult& result)
 {
+    // Nav2's result is empty: reaching the goal is reported by the result CODE and nothing else,
+    // unlike this stack's own skills.
     if (result.code != rclcpp_action::ResultCode::SUCCEEDED)
     {
         RCLCPP_ERROR(node_->get_logger(), "[%s] did not reach the goal", name().c_str());
-        // Nav2 says why in its result when it can; the result code is all there is when not.
-        const bool said = result.result && !result.result->error_msg.empty();
-        setFailureText(
-            said ? "Nav2 did not reach the goal: " + result.result->error_msg :
-                   "Nav2 did not reach the goal: " + describeResultCode(result.code));
         return BT::NodeStatus::FAILURE;
     }
     RCLCPP_INFO(node_->get_logger(), "[%s] arrived", name().c_str());
